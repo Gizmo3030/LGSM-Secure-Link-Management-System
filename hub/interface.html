@@ -103,6 +103,10 @@
 
     <script>
         function hubApp() {
+            return {
+                token: localStorage.getItem('hub_token'),
+                loginForm: { username: '', password: '' },
+                loginError: '',
                 spokes: [],
                 newSpoke: { name: '', ip: '', port: 49950, api_key: '' },
                 showSettings: false,
