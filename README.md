@@ -22,7 +22,7 @@ A professional-grade, two-part management system for LinuxGSM (LGSM).
 
 ### Hub Setup (Central Dashboard)
 1. Navigate to the `hub` directory.
-2. Run `docker-compose up -d`.
+2. Run `docker compose up -d`.
 3. Access the dashboard at `http://localhost:49950` (default port).
 
 ### Spoke Setup (Game Server VM)
