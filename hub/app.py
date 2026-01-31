@@ -26,7 +26,8 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS spokes 
-                 (id INTEGER PRIMARY KEY, name TEXT, ip TEXT, port INTEGER, api_key TEXT)''')
+                 (id INTEGER PRIMARY KEY, name TEXT, ip TEXT, port INTEGER, api_key TEXT, 
+                  status TEXT DEFAULT 'offline', last_seen TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY, value TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -37,6 +38,14 @@ def init_db():
     columns = [column[1] for column in c.fetchall()]
     if 'role' not in columns:
         c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+
+    # Migration for spokes table
+    c.execute("PRAGMA table_info(spokes)")
+    spoke_columns = [column[1] for column in c.fetchall()]
+    if 'status' not in spoke_columns:
+        c.execute("ALTER TABLE spokes ADD COLUMN status TEXT DEFAULT 'offline'")
+    if 'last_seen' not in spoke_columns:
+        c.execute("ALTER TABLE spokes ADD COLUMN last_seen TEXT")
 
     # Create default user if not exists
     c.execute("SELECT * FROM users WHERE username='admin'")
@@ -195,16 +204,23 @@ async def heartbeat_monitor():
         c = conn.cursor()
         c.execute("SELECT id, name, ip, port, api_key FROM spokes")
         spokes = c.fetchall()
-        conn.close()
         
         async with httpx.AsyncClient() as client:
             for sid, name, ip, port, api_key in spokes:
                 try:
                     resp = await client.get(f"http://{ip}:{port}/status", headers={"X-API-KEY": api_key}, timeout=5)
+                    status = "online" if resp.status_code == 200 else "offline"
                     if resp.status_code != 200:
                         await send_discord_alert(f"⚠️ Spoke Alert: {name} ({ip}) is unresponsive (HTTP {resp.status_code})")
                 except Exception:
+                    status = "offline"
                     await send_discord_alert(f"🚨 Spoke CRITICAL: {name} ({ip}) is OFFLINE")
+                
+                c.execute("UPDATE spokes SET status=?, last_seen=? WHERE id=?", 
+                          (status, datetime.datetime.utcnow().isoformat(), sid))
+        
+        conn.commit()
+        conn.close()
 
 @app.get("/", response_class=HTMLResponse)
 async def get_ui():
@@ -266,10 +282,10 @@ async def delete_spoke(spoke_id: int, user=Depends(admin_required)):
 async def list_spokes(user=Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, name, ip, port, api_key FROM spokes")
+    c.execute("SELECT id, name, ip, port, api_key, status, last_seen FROM spokes")
     rows = c.fetchall()
     conn.close()
-    return [{"id": r[0], "name": r[1], "ip": r[2], "port": r[3], "api_key": r[4]} for r in rows]
+    return [{"id": r[0], "name": r[1], "ip": r[2], "port": r[3], "api_key": r[4], "status": r[5], "last_seen": r[6]} for r in rows]
 
 @app.get("/settings")
 async def get_settings(user=Depends(admin_required)):
@@ -306,18 +322,31 @@ async def proxy_status(spoke_id: int, user=Depends(get_current_user)):
     c = conn.cursor()
     c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
     spoke = c.fetchone()
-    conn.close()
     
     if not spoke:
+        conn.close()
         raise HTTPException(status_code=404, detail="Spoke not found")
     
     ip, port, api_key = spoke
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(f"http://{ip}:{port}/status", headers={"X-API-KEY": api_key})
-            return resp.json()
+            data = resp.json()
+            status = data.get("status", "offline")
+            last_seen = datetime.datetime.utcnow().isoformat()
+            c.execute("UPDATE spokes SET status=?, last_seen=? WHERE id=?", 
+                      (status, last_seen, spoke_id))
+            conn.commit()
+            conn.close()
+            data["last_seen"] = last_seen
+            return data
         except Exception as e:
-            return {"status": "offline", "error": str(e)}
+            last_seen = datetime.datetime.utcnow().isoformat()
+            c.execute("UPDATE spokes SET status='offline', last_seen=? WHERE id=?", 
+                      (last_seen, spoke_id))
+            conn.commit()
+            conn.close()
+            return {"status": "offline", "error": str(e), "last_seen": last_seen}
 
 @app.get("/proxy/telemetry/{spoke_id}")
 async def proxy_telemetry(spoke_id: int, user=Depends(get_current_user)):

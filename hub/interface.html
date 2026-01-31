@@ -161,7 +161,9 @@
         <!-- Fleet Status Section -->
         <section>
             <h2 class="text-lg font-semibold mb-6 flex items-center">
-                <span class="w-3 h-3 bg-green-500 rounded-full mr-2"></span> Entire Fleet Management
+                <span :class="onlineSpokesCount() > 0 ? 'bg-green-500' : 'bg-red-500'" class="w-3 h-3 rounded-full mr-2"></span> 
+                Entire Fleet Management
+                <span class="ml-2 text-xs text-gray-500" x-text="'(' + onlineSpokesCount() + '/' + spokes.length + ' Online)'"></span>
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <template x-for="spoke in spokes" :key="spoke.id">
@@ -170,6 +172,7 @@
                             <div>
                                 <h3 class="text-lg font-bold" x-text="spoke.name"></h3>
                                 <p class="text-xs text-gray-400" x-text="spoke.ip + ':' + spoke.port"></p>
+                                <p class="text-[9px] text-gray-500 mt-1" x-show="spoke.last_seen" x-text="'Last checked: ' + new Date(spoke.last_seen + 'Z').toLocaleString()"></p>
                             </div>
                             <span :class="spoke.status === 'online' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'" 
                                   class="text-[10px] uppercase font-black px-2 py-1 rounded" 
@@ -177,7 +180,16 @@
                         </div>
                         
                         <div class="flex gap-2">
-                            <button @click="fetchStatus(spoke)" class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded">Refresh</button>
+                            <button @click="fetchStatus(spoke)" 
+                                    :disabled="spoke.refreshing"
+                                    :class="spoke.refreshing ? 'opacity-50 cursor-not-allowed' : ''"
+                                    class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded flex items-center gap-1">
+                                <svg x-show="spoke.refreshing" class="animate-spin h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span x-text="spoke.refreshing ? 'Refreshing...' : 'Refresh'"></span>
+                            </button>
                             <button @click="spoke.showControl = !spoke.showControl; if(spoke.showControl) fetchTelemetry(spoke)" 
                                     :class="spoke.showControl ? 'bg-blue-500' : 'bg-blue-600'"
                                     class="hover:bg-blue-700 text-xs px-3 py-1 rounded transition">Control</button>
@@ -218,7 +230,7 @@
                                             <div class="flex gap-1">
                                                 <button @click="runCommand(spoke, session.session, 'start', session.user)" class="bg-green-700 hover:bg-green-600 text-[10px] px-2 py-1 rounded">Start</button>
                                                 <button @click="runCommand(spoke, session.session, 'stop', session.user)" class="bg-red-700 hover:bg-red-600 text-[10px] px-2 py-1 rounded">Stop</button>
-                                                <button @click="runCommand(spoke, session.session, 'restart', session.user)" class="bg-yellow-700 hover:bg-yellow-600 text-[10px] px-2 py-1 rounded">Restart</button>
+                                                <button @click="runCommand(spoke, session.session, 'update', session.user)" class="bg-blue-700 hover:bg-blue-600 text-[10px] px-2 py-1 rounded">Update</button>
                                             </div>
                                         </div>
                                     </template>
@@ -227,10 +239,14 @@
 
                             <!-- Manual Script Trigger -->
                             <div class="pt-2 border-t border-gray-700/50">
-                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Run Manual Command</label>
-                                <div class="flex gap-1">
-                                    <input type="text" x-model="spoke.manualScript" placeholder="scriptname" class="flex-1 bg-gray-900 text-xs border border-gray-700 rounded px-2 py-1">
-                                    <button @click="runCommand(spoke, spoke.manualScript, 'start')" class="bg-blue-600 text-[10px] px-2 py-1 rounded">Execute</button>
+                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Game Server Controls</label>
+                                <div class="space-y-2">
+                                    <input type="text" x-model="spoke.manualScript" placeholder="script name (e.g. rustserver)" class="w-full bg-gray-900 text-xs border border-gray-700 rounded px-2 py-1 outline-none focus:border-blue-500">
+                                    <div class="grid grid-cols-3 gap-1">
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'start')" class="bg-green-600 hover:bg-green-700 text-[10px] px-2 py-1 rounded transition font-bold">START</button>
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'stop')" class="bg-red-600 hover:bg-red-700 text-[10px] px-2 py-1 rounded transition font-bold">STOP</button>
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'update')" class="bg-blue-600 hover:bg-blue-700 text-[10px] px-2 py-1 rounded transition font-bold">UPDATE</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -425,7 +441,9 @@
                         const data = await res.json();
                         this.spokes = data.map(s => ({
                             ...s,
-                            status: 'Checking...',
+                            status: s.status || 'Checking...',
+                            last_seen: s.last_seen || null,
+                            refreshing: false,
                             showControl: false,
                             telemetry: null,
                             sessions: [],
@@ -433,6 +451,10 @@
                         }));
                         this.spokes.forEach(s => this.fetchStatus(s));
                     }
+                },
+
+                onlineSpokesCount() {
+                    return this.spokes.filter(s => s.status === 'online').length;
                 },
 
                 async deleteSpoke(id) {
@@ -486,15 +508,29 @@
                 },
 
                 async fetchStatus(spoke) {
-                    const res = await fetch(`/proxy/status/${spoke.id}`, {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
-                    const statusData = await res.json();
                     const index = this.spokes.findIndex(s => s.id === spoke.id);
                     if (index !== -1) {
-                        this.spokes[index].status = statusData.status;
-                        this.spokes[index].sessions = statusData.sessions || [];
-                        this.$nextTick(() => { this.spokes = [...this.spokes]; });
+                        this.spokes[index].refreshing = true;
+                        this.spokes = [...this.spokes];
+                    }
+
+                    try {
+                        const res = await fetch(`/proxy/status/${spoke.id}`, {
+                            headers: { 'Authorization': 'Bearer ' + this.token }
+                        });
+                        const statusData = await res.json();
+                        if (index !== -1) {
+                            this.spokes[index].status = statusData.status;
+                            this.spokes[index].sessions = statusData.sessions || [];
+                            if (statusData.last_seen) this.spokes[index].last_seen = statusData.last_seen;
+                        }
+                    } catch (e) {
+                        if (index !== -1) this.spokes[index].status = 'offline';
+                    } finally {
+                        if (index !== -1) {
+                            this.spokes[index].refreshing = false;
+                            this.spokes = [...this.spokes];
+                        }
                     }
                 },
 
