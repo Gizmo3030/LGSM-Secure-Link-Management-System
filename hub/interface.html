@@ -173,8 +173,58 @@
                         
                         <div class="flex gap-2">
                             <button @click="fetchStatus(spoke)" class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded">Refresh</button>
-                            <button class="bg-blue-600 hover:bg-blue-700 text-xs px-3 py-1 rounded">Control</button>
+                            <button @click="spoke.showControl = !spoke.showControl; if(spoke.showControl) fetchTelemetry(spoke)" 
+                                    :class="spoke.showControl ? 'bg-blue-500' : 'bg-blue-600'"
+                                    class="hover:bg-blue-700 text-xs px-3 py-1 rounded transition">Control</button>
                             <button x-show="isAdmin()" @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
+                        </div>
+
+                        <!-- Control Panel (Dynamic) -->
+                        <div x-show="spoke.showControl" x-transition class="mt-4 pt-4 border-t border-gray-700 space-y-4">
+                            <!-- Telemetry -->
+                            <div class="grid grid-cols-3 gap-2 text-center text-[10px]">
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">CPU</div>
+                                    <div class="text-blue-400 font-bold" x-text="(spoke.telemetry?.cpu_usage || 0) + '%'"></div>
+                                </div>
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">RAM</div>
+                                    <div class="text-green-400 font-bold" x-text="(spoke.telemetry?.ram_usage || 0) + '%'"></div>
+                                </div>
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">Disk</div>
+                                    <div class="text-yellow-400 font-bold" x-text="(spoke.telemetry?.disk_usage || 0) + '%'"></div>
+                                </div>
+                            </div>
+
+                            <!-- Sessions & Commands -->
+                            <div>
+                                <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">Active LGSM Sessions</h4>
+                                <div class="space-y-2">
+                                    <template x-if="!spoke.sessions || spoke.sessions.length === 0">
+                                        <p class="text-xs text-gray-600 italic">No active sessions found.</p>
+                                    </template>
+                                    <template x-for="session in spoke.sessions" :key="session">
+                                        <div class="bg-gray-900 p-2 rounded flex justify-between items-center">
+                                            <span class="text-xs font-mono text-green-500" x-text="session.split(':')[0]"></span>
+                                            <div class="flex gap-1">
+                                                <button @click="runCommand(spoke, session.split(':')[0], 'start')" class="bg-green-700 hover:bg-green-600 text-[10px] px-2 py-1 rounded">Start</button>
+                                                <button @click="runCommand(spoke, session.split(':')[0], 'stop')" class="bg-red-700 hover:bg-red-600 text-[10px] px-2 py-1 rounded">Stop</button>
+                                                <button @click="runCommand(spoke, session.split(':')[0], 'restart')" class="bg-yellow-700 hover:bg-yellow-600 text-[10px] px-2 py-1 rounded">Restart</button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Manual Script Trigger -->
+                            <div class="pt-2 border-t border-gray-700/50">
+                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Run Manual Command</label>
+                                <div class="flex gap-1">
+                                    <input type="text" x-model="spoke.manualScript" placeholder="scriptname" class="flex-1 bg-gray-900 text-xs border border-gray-700 rounded px-2 py-1">
+                                    <button @click="runCommand(spoke, spoke.manualScript, 'start')" class="bg-blue-600 text-[10px] px-2 py-1 rounded">Execute</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </template>
@@ -363,7 +413,15 @@
                         headers: { 'Authorization': 'Bearer ' + this.token }
                     });
                     if (res.ok) {
-                        this.spokes = await res.json();
+                        const data = await res.json();
+                        this.spokes = data.map(s => ({
+                            ...s,
+                            status: 'Checking...',
+                            showControl: false,
+                            telemetry: null,
+                            sessions: [],
+                            manualScript: ''
+                        }));
                         this.spokes.forEach(s => this.fetchStatus(s));
                     }
                 },
@@ -426,8 +484,32 @@
                     const index = this.spokes.findIndex(s => s.id === spoke.id);
                     if (index !== -1) {
                         this.spokes[index].status = statusData.status;
+                        this.spokes[index].sessions = statusData.sessions || [];
                         this.$nextTick(() => { this.spokes = [...this.spokes]; });
                     }
+                },
+
+                async fetchTelemetry(spoke) {
+                    const res = await fetch(`/proxy/telemetry/${spoke.id}`, {
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    const telemetryData = await res.json();
+                    const index = this.spokes.findIndex(s => s.id === spoke.id);
+                    if (index !== -1) {
+                        this.spokes[index].telemetry = telemetryData;
+                        this.$nextTick(() => { this.spokes = [...this.spokes]; });
+                    }
+                },
+
+                async runCommand(spoke, script, action) {
+                    if (!script) return alert('Please enter a script name');
+                    const res = await fetch(`/proxy/command/${spoke.id}/${script}/${action}`, {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    const result = await res.json();
+                    alert(result.message || result.error || 'Command triggered');
+                    setTimeout(() => this.fetchStatus(spoke), 2000);
                 }
             }
         }

@@ -319,6 +319,44 @@ async def proxy_status(spoke_id: int, user=Depends(get_current_user)):
         except Exception as e:
             return {"status": "offline", "error": str(e)}
 
+@app.get("/proxy/telemetry/{spoke_id}")
+async def proxy_telemetry(spoke_id: int, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
+    conn.close()
+    
+    if not spoke:
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(f"http://{ip}:{port}/telemetry", headers={"X-API-KEY": api_key})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+@app.post("/proxy/command/{spoke_id}/{script}/{action}")
+async def proxy_command(spoke_id: int, script: str, action: str, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
+    conn.close()
+    
+    if not spoke:
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"http://{ip}:{port}/command/{script}/{action}", headers={"X-API-KEY": api_key})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=49950)
