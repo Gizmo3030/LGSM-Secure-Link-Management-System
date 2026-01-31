@@ -121,13 +121,19 @@ async def get_status(x_api_key: str = Header(...)):
             try:
                 # Get UID for the user to locate the tmux socket
                 import pwd
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                
                 try:
                     user_info = pwd.getpwnam(u_name)
                     uid = user_info.pw_uid
-                    # LGSM usually uses the default socket, but we need to point to it explicitly when using sudo
                     socket_path = f"/tmp/tmux-{uid}/default"
                     
-                    tmux_cmd = ["sudo", "-n", "-u", u_name, "tmux"]
+                    # If we are the same user or root, we don't need sudo
+                    if current_user == u_name or os.getuid() == 0:
+                        tmux_cmd = ["tmux"]
+                    else:
+                        tmux_cmd = ["sudo", "-n", "-u", u_name, "tmux"]
+                    
                     if os.path.exists(socket_path):
                         tmux_cmd += ["-S", socket_path]
                     tmux_cmd += ["ls"]
@@ -231,7 +237,12 @@ async def run_command(script: str, action: str, x_api_key: str = Header(...), us
         raise HTTPException(status_code=404, detail=f"Could not locate script '{script}' for any managed user")
 
     # Construct and run command
-    cmd = f"sudo -n -u {target_user} {target_dir}/{script} {action}"
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    if current_user == target_user or os.getuid() == 0:
+        cmd = f"{target_dir}/{script} {action}"
+    else:
+        cmd = f"sudo -n -u {target_user} {target_dir}/{script} {action}"
+        
     subprocess.Popen(cmd.split(), start_new_session=True)
     return {"message": f"Command '{action}' triggered for {script} as {target_user}"}
 
@@ -279,20 +290,38 @@ async def get_logs(script: str, x_api_key: str = Header(...), user: Optional[str
         log_path = possible_paths[0]
 
     try:
-        # Use sudo tail to ensure we can read the file regardless of agent user permissions
-        cmd = ["sudo", "-n", "-u", target_user, "tail", "-n", str(lines), log_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        import pwd
+        current_user = pwd.getpwuid(os.getuid()).pw_name
         
-        if result.returncode != 0:
-            # If tail failed, maybe the file really doesn't exist or sudo failed
+        # 1. Try direct read first (always preferred if possible)
+        try:
+            if os.path.exists(log_path) and os.access(log_path, os.R_OK):
+                cmd = ["tail", "-n", str(lines), log_path]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return {"script": script, "logs": result.stdout}
+        except:
+            pass
+
+        # 2. Try sudo fallback if not same user
+        if current_user != target_user and os.getuid() != 0:
+            cmd = ["sudo", "-n", "-u", target_user, "tail", "-n", str(lines), log_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                return {"script": script, "logs": result.stdout}
+            
             err_msg = result.stderr.lower()
             if "no such file" in err_msg:
                 raise HTTPException(status_code=404, detail=f"Log file not found at {log_path}")
-            if "permission denied" in err_msg:
-                raise HTTPException(status_code=403, detail="Permission denied reading log file (sudo issue)")
-            return {"error": f"Tail failed: {result.stderr or 'Unknown error'}", "code": result.returncode}
+            if "password is required" in err_msg or "sudo: a password is required" in err_msg:
+                raise HTTPException(status_code=403, detail="Permission denied. Agent cannot use sudo and doesn't have read access to the log file. Try: sudo chmod 644 " + log_path)
             
-        return {"script": script, "logs": result.stdout}
+            return {"error": f"Failed to read logs: {result.stderr or 'Check file permissions'}", "code": result.returncode}
+        else:
+            # We are the user but tail failed or os.access lied
+            return {"error": "Could not read log file. Check if it exists and has content."}
+
     except HTTPException:
         raise
     except Exception as e:
