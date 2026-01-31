@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+![Dashboard Screenshot](screenshot.png)
+
 A centralized management system for [LinuxGSM](https://linuxgsm.com/) (LGSM) that provides a secure dashboard to monitor and control multiple game servers from a single location.
 
 ## 🏗️ Architecture
