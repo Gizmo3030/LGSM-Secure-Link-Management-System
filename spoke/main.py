@@ -119,30 +119,56 @@ async def get_status(x_api_key: str = Header(...)):
             # 2. Check which ones have active tmux sessions
             active_sessions = []
             try:
-                # Check tmux for this user
-                # We use -L default to ensure we are looking at the right socket if multiple exist
-                result = subprocess.run(
-                    ["sudo", "-n", "-u", u_name, "tmux", "ls"], 
-                    capture_output=True, text=True, timeout=2
-                )
-                
-                # LGSM sessions usually match the script name exactly
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split("\n"):
-                        if ":" in line:
-                            session_name = line.split(":")[0].strip()
-                            active_sessions.append(session_name)
-                elif "no server running" in result.stderr.lower() or "failed to connect" in result.stderr.lower():
-                    # This is a normal state, just means no tmux sessions exist for this user
-                    pass
+                # Get UID for the user to locate the tmux socket
+                import pwd
+                try:
+                    user_info = pwd.getpwnam(u_name)
+                    uid = user_info.pw_uid
+                    # LGSM usually uses the default socket, but we need to point to it explicitly when using sudo
+                    socket_path = f"/tmp/tmux-{uid}/default"
+                    
+                    tmux_cmd = ["sudo", "-n", "-u", u_name, "tmux"]
+                    if os.path.exists(socket_path):
+                        tmux_cmd += ["-S", socket_path]
+                    tmux_cmd += ["ls"]
+                    
+                    result = subprocess.run(
+                        tmux_cmd, 
+                        capture_output=True, text=True, timeout=2
+                    )
+                    
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split("\n"):
+                            if ":" in line:
+                                session_name = line.split(":")[0].strip()
+                                active_sessions.append(session_name)
+                    elif "no server running" in result.stderr.lower() or "failed to connect" in result.stderr.lower():
+                        pass
+                except KeyError:
+                    pass # User doesn't exist?
             except Exception:
                 pass
 
             # 3. Combine into instance objects
             for script in scripts:
                 # LGSM session names are often the script name
-                is_running = script in active_sessions
+                # We also check if any active session CONTAINS the script name as a fallback
+                is_running = any(script == s or s.startswith(script + "-") for s in active_sessions)
                 
+                # Double-check with process list as a total fallback
+                if not is_running:
+                    try:
+                        # Check if any process owned by this user has this script name in its cmdline
+                        for proc in psutil.process_iter(['username', 'cmdline']):
+                            if (proc.info['username'] == u_name and 
+                                proc.info['cmdline'] and 
+                                any(script in arg for arg in proc.info['cmdline']) and
+                                'tmux' in ' '.join(proc.info['cmdline']).lower()):
+                                is_running = True
+                                break
+                    except:
+                        pass
+
                 all_instances.append({
                     "user": u_name,
                     "script": script,
