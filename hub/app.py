@@ -30,12 +30,22 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY, value TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT)''')
+                 (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, role TEXT DEFAULT 'user')''')
+    
+    # Check if role column exists (for migration)
+    c.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in c.fetchall()]
+    if 'role' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+
     # Create default user if not exists
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         hashed = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode()
-        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("admin", hashed))
+        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("admin", hashed, "admin"))
+    else:
+        # Ensure default admin has admin role
+        c.execute("UPDATE users SET role='admin' WHERE username='admin'")
     conn.commit()
     conn.close()
 
@@ -58,6 +68,14 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: Optional[str] = "user"
+
+class PasswordChange(BaseModel):
+    new_password: str
+
 # Auth Helpers
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -75,18 +93,96 @@ async def get_current_user(authorization: str = Header(None)):
     except:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+def admin_required(user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 @app.post("/login")
 async def login(req: LoginRequest):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT password_hash FROM users WHERE username=?", (req.username,))
+    c.execute("SELECT password_hash, role FROM users WHERE username=?", (req.username,))
     row = c.fetchone()
     conn.close()
     
     if row and bcrypt.checkpw(req.password.encode(), row[0].encode()):
-        token = create_access_token({"sub": req.username})
+        token = create_access_token({"sub": req.username, "role": row[1]})
         return {"access_token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.get("/users")
+async def list_users(user=Depends(admin_required)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, username, role FROM users")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+
+@app.post("/users")
+async def create_user(req: UserCreate, user=Depends(admin_required)):
+    hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
+                  (req.username, hashed, req.role or "user"))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Username already exists")
+    conn.close()
+    return {"message": "User created"}
+
+@app.delete("/users/{username}")
+async def delete_user(username: str, user=Depends(admin_required)):
+    if username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete super-admin")
+    if username == user["sub"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE username=?", (username,))
+    conn.commit()
+    conn.close()
+    return {"message": "User deleted"}
+
+@app.post("/users/{username}/reset-password")
+async def reset_password(username: str, req: PasswordChange, user=Depends(admin_required)):
+    hashed = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE users SET password_hash=? WHERE username=?", (hashed, username))
+    conn.commit()
+    conn.close()
+    return {"message": f"Password reset for {username}"}
+
+@app.post("/users/{username}/role")
+async def change_user_role(username: str, role: str, user=Depends(admin_required)):
+    if username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot change super-admin role")
+    if role not in ["user", "admin"]:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE users SET role=? WHERE username=?", (role, username))
+    conn.commit()
+    conn.close()
+    return {"message": f"Role updated for {username}"}
+
+@app.post("/change-password")
+async def change_password(req: PasswordChange, user=Depends(get_current_user)):
+    username = user["sub"]
+    hashed = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE users SET password_hash=? WHERE username=?", (hashed, username))
+    conn.commit()
+    conn.close()
+    return {"message": "Password updated"}
 
 @app.on_event("startup")
 async def startup_event():
@@ -116,21 +212,21 @@ async def get_ui():
         return f.read()
 
 @app.get("/install/setup.sh")
-async def download_setup():
+async def download_setup(user=Depends(admin_required)):
     path = "static/spoke/setup.sh"
     if os.path.exists(path):
         return FileResponse(path)
     raise HTTPException(status_code=404, detail="Installer missing")
 
 @app.get("/install/main.py")
-async def download_agent():
+async def download_agent(user=Depends(admin_required)):
     path = "static/spoke/main.py"
     if os.path.exists(path):
         return FileResponse(path)
     raise HTTPException(status_code=404, detail="Agent script missing")
 
 @app.post("/spokes")
-async def add_spoke(spoke: Spoke, user=Depends(get_current_user)):
+async def add_spoke(spoke: Spoke, user=Depends(admin_required)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO spokes (name, ip, port, api_key) VALUES (?, ?, ?, ?)",
@@ -149,7 +245,7 @@ async def list_spokes(user=Depends(get_current_user)):
     return [{"id": r[0], "name": r[1], "ip": r[2], "port": r[3], "api_key": r[4]} for r in rows]
 
 @app.get("/settings")
-async def get_settings(user=Depends(get_current_user)):
+async def get_settings(user=Depends(admin_required)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT key, value FROM settings")
@@ -158,7 +254,7 @@ async def get_settings(user=Depends(get_current_user)):
     return {r[0]: r[1] for r in rows}
 
 @app.post("/settings")
-async def update_settings(settings: dict, user=Depends(get_current_user)):
+async def update_settings(settings: dict, user=Depends(admin_required)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     for key, value in settings.items():
