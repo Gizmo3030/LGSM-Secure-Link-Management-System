@@ -211,26 +211,20 @@ async def get_ui():
     with open("interface.html", "r") as f:
         return f.read()
 
-@app.get("/install/setup.sh")
-async def download_setup():
-    path = "static/spoke/setup.sh"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Installer missing")
-
-@app.get("/install/main.py")
-async def download_agent():
-    path = "static/spoke/main.py"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Agent script missing")
-
-@app.get("/install/uninstall.sh")
-async def download_uninstaller():
-    path = "static/spoke/uninstall.sh"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Uninstaller missing")
+@app.get("/install/{filename}")
+async def download_installer(filename: str):
+    # Check multiple possible locations for the scripts
+    paths = [
+        f"static/spoke/{filename}",      # Docker location
+        f"../spoke/{filename}",           # Local dev location
+        f"spoke/{filename}"               # Direct relative location
+    ]
+    
+    for path in paths:
+        if os.path.exists(path):
+            return FileResponse(path)
+            
+    raise HTTPException(status_code=404, detail=f"Installer {filename} missing")
 
 @app.post("/spokes")
 async def add_spoke(spoke: Spoke, user=Depends(admin_required)):

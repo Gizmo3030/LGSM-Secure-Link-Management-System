@@ -14,12 +14,15 @@ sudo mkdir -p "$APP_DIR"
 sudo chown $(whoami):$(whoami) "$APP_DIR"
 cd "$APP_DIR"
 
-# 1. Fetch main.py if missing
+# 1. Configuration & Fetching
+read -p "Enter Hub IP Address [e.g. 192.168.1.100, optional]: " HUB_IP
+
 if [ ! -f "main.py" ]; then
-    read -p "Enter Hub IP to fetch agent script [optional]: " HUB_IP_FETCH
-    if [ -n "$HUB_IP_FETCH" ]; then
+    if [ -n "$HUB_IP" ]; then
         echo "Fetching agent core from Hub..."
-        wget -q -O main.py "http://$HUB_IP_FETCH:49950/install/main.py"
+        wget -q -O main.py "http://$HUB_IP:49950/install/main.py"
+    else
+        echo "Warning: main.py is missing and no Hub IP provided to fetch it."
     fi
 fi
 
@@ -32,7 +35,7 @@ sudo apt-get install -y python3-venv python3-pip tmux curl
 echo "Setting up Python virtual environment..."
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn psutil
+pip install fastapi uvicorn psutil httpx
 
 # 4. Port Selection
 read -p "Enter management port [default 49950]: " SPOKE_PORT
@@ -40,12 +43,17 @@ SPOKE_PORT=${SPOKE_PORT:-49950}
 
 # 5. Firewall Hardening (UFW)
 if command -v ufw >/dev/null 2>&1; then
-    read -p "Enter Hub Public IP (to allow management traffic): " HUB_IP
     if [ -n "$HUB_IP" ]; then
         echo "Allowing traffic from $HUB_IP on port $SPOKE_PORT using UFW..."
         sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT"
     else
-        echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+        read -p "Enter Hub Public IP (to allow management traffic) [optional]: " ALT_HUB_IP
+        if [ -n "$ALT_HUB_IP" ]; then
+             sudo ufw allow from "$ALT_HUB_IP" to any port "$SPOKE_PORT"
+             HUB_IP=$ALT_HUB_IP
+        else
+            echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+        fi
     fi
 else
     echo "Notice: UFW not found. Skipping firewall configuration."
@@ -56,6 +64,9 @@ fi
 API_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 echo "API_KEY=$API_KEY" > .env
 echo "PORT=$SPOKE_PORT" >> .env
+if [ -n "$HUB_IP" ]; then
+    echo "HUB_IP=$HUB_IP" >> .env
+fi
 
 # 7. Persistence (systemd)
 echo "Setting up systemd service..."
@@ -83,13 +94,13 @@ sudo systemctl enable lgsm-spoke
 sudo systemctl start lgsm-spoke
 
 # 8. Auto-Registration
-if [ -n "$HUB_IP_FETCH" ]; then
-    echo "Attempting auto-registration with Hub..."
+if [ -n "$HUB_IP" ]; then
+    echo "Attempting auto-registration with Hub at $HUB_IP..."
     SPOKE_IP=$(hostname -I | awk '{print $1}')
     SPOKE_NAME=$(hostname)
     
     # Try to register
-    curl -X POST "http://$HUB_IP_FETCH:49950/spokes/register" \
+    curl -X POST "http://$HUB_IP:49950/spokes/register" \
          -H "Content-Type: application/json" \
          -d "{\"name\": \"$SPOKE_NAME\", \"ip\": \"$SPOKE_IP\", \"port\": $SPOKE_PORT, \"api_key\": \"$API_KEY\"}" || echo "Auto-registration failed. Please add manually."
 fi

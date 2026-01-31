@@ -1,6 +1,8 @@
 import os
 import subprocess
 import psutil
+import httpx
+import socket
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
@@ -10,6 +12,8 @@ app = FastAPI(title="LGSM Spoke Agent")
 
 # Environment variables loaded from .env via systemd
 API_KEY = os.getenv("API_KEY")
+HUB_IP = os.getenv("HUB_IP")
+PORT = int(os.getenv("PORT", 49950))
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +21,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def register_with_hub():
+    if HUB_IP:
+        try:
+            # Get the primary IP address of the spoke
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((HUB_IP, 49950))
+            spoke_ip = s.getsockname()[0]
+            s.close()
+            
+            spoke_name = socket.gethostname()
+            
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"http://{HUB_IP}:49950/spokes/register",
+                    json={
+                        "name": spoke_name,
+                        "ip": spoke_ip,
+                        "port": PORT,
+                        "api_key": API_KEY
+                    },
+                    timeout=5.0
+                )
+                if resp.status_code == 200:
+                    print(f"Successfully registered with hub at {HUB_IP}")
+                else:
+                    print(f"Hub registration returned status {resp.status_code}: {resp.text}")
+        except Exception as e:
+            print(f"Failed to auto-register with hub: {e}")
 
 async def verify_token(x_api_key: str = Header(...)):
     if x_api_key != API_KEY:
@@ -88,4 +122,4 @@ async def stream_logs(websocket: WebSocket, script: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 49950)))
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
