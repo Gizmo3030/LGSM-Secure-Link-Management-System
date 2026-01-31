@@ -14,6 +14,29 @@ app = FastAPI(title="LGSM Spoke Agent")
 API_KEY = os.getenv("API_KEY")
 HUB_IP = os.getenv("HUB_IP")
 PORT = int(os.getenv("PORT", 49950))
+# GAME_USERS can be a comma-separated list of usernames
+GAME_USERS = os.getenv("GAME_USERS", os.getenv("GAME_USER", "auto"))
+
+def get_target_users():
+    """Returns a list of (username, home_dir) to monitor."""
+    import pwd
+    targets = []
+    
+    if GAME_USERS == "auto":
+        # Auto-discover LGSM users: any real user with a home in /home
+        for p in pwd.getpwall():
+            if p.pw_dir.startswith("/home/") and p.pw_uid >= 1000:
+                targets.append((p.pw_name, p.pw_dir))
+    else:
+        # Use specifically configured users
+        user_list = [u.strip() for u in GAME_USERS.split(",") if u.strip()]
+        for username in user_list:
+            try:
+                p = pwd.getpwnam(username)
+                targets.append((p.pw_name, p.pw_dir))
+            except KeyError:
+                print(f"Warning: Configured user '{username}' not found on system.")
+    return targets
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,10 +83,30 @@ async def verify_token(x_api_key: str = Header(...)):
 async def get_status(x_api_key: str = Header(...)):
     await verify_token(x_api_key)
     try:
-        # Check tmux ls for game server sessions
-        result = subprocess.run(["tmux", "ls"], capture_output=True, text=True)
-        sessions = result.stdout.strip().split("\n") if result.returncode == 0 else []
-        return {"status": "online", "sessions": sessions}
+        all_sessions = []
+        targets = get_target_users()
+        
+        for u_name, u_dir in targets:
+            try:
+                # Check tmux for this user
+                result = subprocess.run(
+                    ["sudo", "-n", "-u", u_name, "tmux", "ls"], 
+                    capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if line:
+                            # Format: session_name: 1 windows (created ...)
+                            session_name = line.split(":")[0]
+                            all_sessions.append({
+                                "user": u_name,
+                                "dir": u_dir,
+                                "session": session_name
+                            })
+            except Exception:
+                continue
+
+        return {"status": "online", "sessions": all_sessions}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -77,33 +120,68 @@ async def get_telemetry(x_api_key: str = Header(...)):
     }
 
 @app.post("/command/{script}/{action}")
-async def run_command(script: str, action: str, x_api_key: str = Header(...)):
+async def run_command(script: str, action: str, x_api_key: str = Header(...), user: Optional[str] = None):
     await verify_token(x_api_key)
-    # Validate action to prevent injection
     allowed_actions = ["start", "stop", "restart", "update", "backup"]
     if action not in allowed_actions:
         raise HTTPException(status_code=400, detail="Invalid action")
     
-    # Run command asynchronously
-    cmd = f"./{script} {action}"
+    # Resolve which user to run as
+    target_user = user
+    target_dir = None
+    
+    if not target_user:
+        # Fallback to auto-discovery of the script's owner if not provided
+        targets = get_target_users()
+        for u_name, u_dir in targets:
+            if os.path.exists(f"{u_dir}/{script}"):
+                target_user = u_name
+                target_dir = u_dir
+                break
+    else:
+        # Get directory for specific requested user
+        import pwd
+        try:
+            target_dir = pwd.getpwnam(target_user).pw_dir
+        except:
+            raise HTTPException(status_code=404, detail=f"User {target_user} not found")
+
+    if not target_user or not target_dir:
+        raise HTTPException(status_code=404, detail=f"Could not locate script '{script}' for any managed user")
+
+    # Construct and run command
+    cmd = f"sudo -n -u {target_user} {target_dir}/{script} {action}"
     subprocess.Popen(cmd.split(), start_new_session=True)
-    return {"message": f"Command '{action}' triggered for {script}"}
+    return {"message": f"Command '{action}' triggered for {script} as {target_user}"}
 
 @app.websocket("/logs/{script}")
 async def stream_logs(websocket: WebSocket, script: str):
     # Note: API Key validation for WebSockets usually happens via query params or subprotocols
     # For simplicity here, we assume the initial handshake or a token param
     await websocket.accept()
+    process = None
     try:
-        # Assuming LGSM logs are in log/console/script-console.log
-        log_path = f"log/console/{script}-console.log"
-        if not os.path.exists(log_path):
-            await websocket.send_text(f"Log file not found at {log_path}")
+        # Discovery user for logs
+        target_user = None
+        target_dir = None
+        
+        # Try to find which user owns this script/log
+        for u_name, u_dir in get_target_users():
+            if os.path.exists(f"{u_dir}/log/console/{script}-console.log"):
+                target_user = u_name
+                target_dir = u_dir
+                break
+        
+        if not target_user:
+            await websocket.send_text(f"Log file not found for script {script}")
             await websocket.close()
             return
 
+        log_path = f"{target_dir}/log/console/{script}-console.log"
+        cmd = ["sudo", "-n", "-u", target_user, "tail", "-f", log_path]
+
         process = await asyncio.create_subprocess_exec(
-            "tail", "-f", log_path,
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -117,8 +195,9 @@ async def stream_logs(websocket: WebSocket, script: str):
         if process:
             process.terminate()
     except Exception as e:
-        await websocket.send_text(f"Error: {str(e)}")
-        await websocket.close()
+        if websocket:
+            await websocket.send_text(f"Error: {str(e)}")
+            await websocket.close()
 
 if __name__ == "__main__":
     import uvicorn

@@ -339,7 +339,7 @@ async def proxy_telemetry(spoke_id: int, user=Depends(get_current_user)):
             return {"error": str(e)}
 
 @app.post("/proxy/command/{spoke_id}/{script}/{action}")
-async def proxy_command(spoke_id: int, script: str, action: str, user=Depends(get_current_user)):
+async def proxy_command(spoke_id: int, script: str, action: str, request: Request, user=Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
@@ -350,9 +350,18 @@ async def proxy_command(spoke_id: int, script: str, action: str, user=Depends(ge
         raise HTTPException(status_code=404, detail="Spoke not found")
     
     ip, port, api_key = spoke
+    
+    # Extract 'user' from query params if present
+    query_params = dict(request.query_params)
+    target_user = query_params.get("user")
+    
+    url = f"http://{ip}:{port}/command/{script}/{action}"
+    if target_user:
+        url += f"?user={target_user}"
+
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(f"http://{ip}:{port}/command/{script}/{action}", headers={"X-API-KEY": api_key})
+            resp = await client.post(url, headers={"X-API-KEY": api_key})
             return resp.json()
         except Exception as e:
             return {"error": str(e)}

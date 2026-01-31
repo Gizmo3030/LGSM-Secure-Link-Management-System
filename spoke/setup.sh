@@ -15,7 +15,14 @@ sudo chown $(whoami):$(whoami) "$APP_DIR"
 cd "$APP_DIR"
 
 # 1. Configuration & Fetching
-read -p "Enter Hub IP Address [e.g. 192.168.1.100, optional]: " HUB_IP
+# Support for Command Line Arguments
+# Usage: ./setup.sh [HUB_IP] [GAME_USERS]
+HUB_IP=${1:-""}
+GAME_USERS=${2:-""}
+
+if [ -z "$HUB_IP" ]; then
+    read -p "Enter Hub IP Address [e.g. 192.168.1.100, optional]: " HUB_IP
+fi
 
 if [ ! -f "main.py" ]; then
     if [ -n "$HUB_IP" ]; then
@@ -37,9 +44,17 @@ python3 -m venv venv
 source venv/bin/activate
 pip install fastapi uvicorn psutil httpx
 
-# 4. Port Selection
+# 4. Port & User Selection
 read -p "Enter management port [default 49950]: " SPOKE_PORT
 SPOKE_PORT=${SPOKE_PORT:-49950}
+
+if [ -z "$GAME_USERS" ]; then
+    echo "--- Multi-User Configuration ---"
+    echo "You can specify a comma-separated list of users (e.g. pzserver,rustserver)"
+    echo "Or leave blank to auto-discover all users in /home."
+    read -p "Enter Game Users to monitor [default: auto]: " GAME_USERS
+    GAME_USERS=${GAME_USERS:-"auto"}
+fi
 
 # 5. Firewall Hardening (UFW)
 if command -v ufw >/dev/null 2>&1; then
@@ -67,6 +82,9 @@ echo "PORT=$SPOKE_PORT" >> .env
 if [ -n "$HUB_IP" ]; then
     echo "HUB_IP=$HUB_IP" >> .env
 fi
+if [ -n "$GAME_USERS" ]; then
+    echo "GAME_USERS=$GAME_USERS" >> .env
+fi
 
 # 7. Persistence (systemd)
 echo "Setting up systemd service..."
@@ -92,6 +110,36 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable lgsm-spoke
 sudo systemctl start lgsm-spoke
+
+# 7.5 Setup Sudo Permissions (Auto-Discovery)
+echo "Configuring sudoers for LGSM management..."
+CURRENT_USER=$(whoami)
+SUDOERS_FILE="/etc/sudoers.d/lgsm-spoke-$CURRENT_USER"
+TMUX_PATH=$(which tmux || echo "/usr/bin/tmux")
+TAIL_PATH=$(which tail || echo "/usr/bin/tail")
+
+if [ "$GAME_USERS" = "auto" ]; then
+    # Allow management of ANY user on the system
+    # This is safe because only the spoke (authenticated with API KEY) can invoke these
+    sudo bash -c "cat > $SUDOERS_FILE" <<EOF
+$CURRENT_USER ALL=(ALL) NOPASSWD: $TMUX_PATH ls, $TAIL_PATH -f /home/*/log/console/*, /home/*/* *
+EOF
+else
+    # Allow management of specific users only
+    IFS=',' read -ra ADDR <<< "$GAME_USERS"
+    SUDO_RULES=""
+    for i in "${ADDR[@]}"; do
+        USER_TRIM=$(echo "$i" | xargs)
+        SUDO_RULES="$SUDO_RULES
+$CURRENT_USER ALL=($USER_TRIM) NOPASSWD: $TMUX_PATH ls, $TAIL_PATH -f /home/$USER_TRIM/log/console/*, /home/$USER_TRIM/* *"
+    done
+    sudo bash -c "cat > $SUDOERS_FILE" <<EOF
+$SUDO_RULES
+EOF
+fi
+
+sudo chmod 440 "$SUDOERS_FILE"
+echo "Sudoers permissions configured at $SUDOERS_FILE"
 
 # 8. Auto-Registration
 if [ -n "$HUB_IP" ]; then
