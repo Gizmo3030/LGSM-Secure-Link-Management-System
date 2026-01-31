@@ -635,13 +635,17 @@
                         });
                         const data = await res.json();
                         
-                        if (res.ok && data.logs) {
-                            this.logContent = data.logs || 'No log data available.';
+                        if (res.ok) {
+                            if (data.error) {
+                                this.logContent = `Agent Error: ${data.error}`;
+                            } else {
+                                this.logContent = data.logs || 'Console log is empty.';
+                            }
                         } else {
-                            this.logContent = `Error: ${data.detail || data.error || 'Failed to fetch logs'}`;
+                            this.logContent = `Fetch Error: ${data.detail || data.error || 'Failed to connect to agent'}`;
                         }
                     } catch (e) {
-                        this.logContent = `Error: ${e.message}`;
+                        this.logContent = `Fetch Error: ${e.message}`;
                     } finally {
                         this.logLoading = false;
                     }

@@ -3,7 +3,7 @@ import sqlite3
 import jwt
 import datetime
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -419,9 +419,15 @@ async def proxy_logs(spoke_id: int, script: str, request: Request, user=Depends(
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(url, headers={"X-API-KEY": api_key})
+            # Return same status code as agent if it's not successful
+            if resp.status_code != 200:
+                try:
+                    return JSONResponse(status_code=resp.status_code, content=resp.json())
+                except:
+                    return JSONResponse(status_code=resp.status_code, content={"error": "Agent returned error without JSON body"})
             return resp.json()
         except Exception as e:
-            return {"error": str(e)}
+            raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

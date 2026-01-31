@@ -257,16 +257,44 @@ async def get_logs(script: str, x_api_key: str = Header(...), user: Optional[str
             raise HTTPException(status_code=404, detail=f"User {target_user} not found")
 
     if not target_user or not target_dir:
-        raise HTTPException(status_code=404, detail="Log file not found")
+        raise HTTPException(status_code=404, detail="Could not identify user or directory for this script")
 
-    log_path = f"{target_dir}/log/console/{script}-console.log"
-    if not os.path.exists(log_path):
-        raise HTTPException(status_code=404, detail="Log file does not exist yet")
+    # Try a few common LGSM log locations
+    possible_paths = [
+        f"{target_dir}/log/console/{script}-console.log",
+        f"{target_dir}/log/console/{script}.log",
+        f"{target_dir}/log/{script}-console.log"
+    ]
+    
+    log_path = None
+    for p in possible_paths:
+        # Since we might not have permission to p, we check existence with sudo if needed
+        # but usually os.path.exists works if the agent has some permissions or is root
+        if os.path.exists(p):
+            log_path = p
+            break
+            
+    if not log_path:
+        # Final attempt: just try the most likely one even if os.path.exists failed (permissions?)
+        log_path = possible_paths[0]
 
     try:
+        # Use sudo tail to ensure we can read the file regardless of agent user permissions
         cmd = ["sudo", "-n", "-u", target_user, "tail", "-n", str(lines), log_path]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            # If tail failed, maybe the file really doesn't exist or sudo failed
+            err_msg = result.stderr.lower()
+            if "no such file" in err_msg:
+                raise HTTPException(status_code=404, detail=f"Log file not found at {log_path}")
+            if "permission denied" in err_msg:
+                raise HTTPException(status_code=403, detail="Permission denied reading log file (sudo issue)")
+            return {"error": f"Tail failed: {result.stderr or 'Unknown error'}", "code": result.returncode}
+            
         return {"script": script, "logs": result.stdout}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
