@@ -14,7 +14,9 @@ import asyncio
 app = FastAPI(title="LGSM Hub Dashboard")
 
 # Security
-SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-hub-key")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set for security. Generate a secure random key with: python -c 'import secrets; print(secrets.token_urlsafe(32))'")
 ALGORITHM = "HS256"
 
 # Database setup
