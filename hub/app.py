@@ -212,14 +212,14 @@ async def get_ui():
         return f.read()
 
 @app.get("/install/setup.sh")
-async def download_setup(user=Depends(admin_required)):
+async def download_setup():
     path = "static/spoke/setup.sh"
     if os.path.exists(path):
         return FileResponse(path)
     raise HTTPException(status_code=404, detail="Installer missing")
 
 @app.get("/install/main.py")
-async def download_agent(user=Depends(admin_required)):
+async def download_agent():
     path = "static/spoke/main.py"
     if os.path.exists(path):
         return FileResponse(path)
