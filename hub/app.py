@@ -50,6 +50,8 @@ def init_db():
         c.execute("ALTER TABLE spokes ADD COLUMN last_seen TEXT")
 
     # Create default user if not exists
+    # NOTE: Default password is "admin123" for initial setup only.
+    # Users MUST change this immediately after first login (documented in README)
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         hashed = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode()

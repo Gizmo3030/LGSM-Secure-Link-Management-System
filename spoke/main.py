@@ -213,6 +213,10 @@ async def run_command(script: str, action: str, x_api_key: str = Header(...), us
     if action not in allowed_actions:
         raise HTTPException(status_code=400, detail="Invalid action")
     
+    # Validate script name to prevent path traversal and command injection
+    if not script or '/' in script or '\\' in script or script.startswith('.') or ';' in script or '|' in script or '&' in script:
+        raise HTTPException(status_code=400, detail="Invalid script name")
+    
     # Resolve which user to run as
     target_user = user
     target_dir = None
@@ -249,6 +253,14 @@ async def run_command(script: str, action: str, x_api_key: str = Header(...), us
 @app.get("/logs/{script}")
 async def get_logs(script: str, x_api_key: str = Header(...), user: Optional[str] = None, lines: int = 100):
     await verify_token(x_api_key)
+    
+    # Validate script name to prevent path traversal and command injection
+    if not script or '/' in script or '\\' in script or script.startswith('.') or ';' in script or '|' in script or '&' in script:
+        raise HTTPException(status_code=400, detail="Invalid script name")
+    
+    # Validate lines parameter to prevent abuse
+    if lines < 1 or lines > 10000:
+        raise HTTPException(status_code=400, detail="Lines parameter must be between 1 and 10000")
     
     # Discovery user for logs
     target_user = user
@@ -334,6 +346,12 @@ async def stream_logs(websocket: WebSocket, script: str):
     await websocket.accept()
     process = None
     try:
+        # Validate script name to prevent path traversal and command injection
+        if not script or '/' in script or '\\' in script or script.startswith('.') or ';' in script or '|' in script or '&' in script:
+            await websocket.send_text("Invalid script name")
+            await websocket.close()
+            return
+        
         # Discovery user for logs
         target_user = None
         target_dir = None
