@@ -243,6 +243,7 @@
                                             <span class="text-[9px] text-gray-500 block" x-text="'user: ' + session.user"></span>
                                         </div>
                                         <div class="flex gap-1">
+                                            <button @click="fetchLogs(spoke, session.script, session.user)" class="bg-gray-700 hover:bg-gray-600 text-[9px] px-2 py-1 rounded">CONSOLE</button>
                                             <button x-show="session.status !== 'running'" @click="runCommand(spoke, session.script, 'start', session.user)" class="bg-green-700 hover:bg-green-600 text-[9px] px-2 py-1 rounded">START</button>
                                             <button x-show="session.status === 'running'" @click="runCommand(spoke, session.script, 'stop', session.user)" class="bg-red-700 hover:bg-red-600 text-[9px] px-2 py-1 rounded">STOP</button>
                                             <button @click="runCommand(spoke, session.script, 'update', session.user)" class="bg-blue-700 hover:bg-blue-600 text-[9px] px-2 py-1 rounded">UPDATE</button>
@@ -270,6 +271,31 @@
                 </template>
             </div>
         </section>
+
+        <!-- Logs Modal -->
+        <div x-show="showLogs" 
+             x-transition 
+             class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+             style="display: none;">
+            <div class="bg-gray-800 border border-gray-700 rounded-lg shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+                <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-lg">
+                    <h3 class="font-bold text-blue-400" x-text="logTitle"></h3>
+                    <div class="flex items-center gap-2">
+                        <button @click="fetchLogs({id: logSpokeId, name: logSpokeName}, logScript, logUser)" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition">Refresh</button>
+                        <button @click="showLogs = false" class="text-gray-400 hover:text-white">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 overflow-y-auto flex-1 bg-black font-mono text-xs text-green-400 selection:bg-green-900 selection:text-white">
+                    <pre class="whitespace-pre-wrap" x-text="logContent"></pre>
+                </div>
+                <div class="p-3 border-t border-gray-700 bg-gray-800 rounded-b-lg text-[10px] text-gray-500 flex justify-between">
+                    <span>Showing last 100 lines of console output.</span>
+                    <span x-show="logLoading" class="animate-pulse text-blue-400">Refreshing logs...</span>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -286,6 +312,14 @@
                 installOpts: { user: '', dir: '' },
                 showSettings: false,
                 showProfile: false,
+                showLogs: false,
+                logContent: '',
+                logTitle: '',
+                logLoading: false,
+                logSpokeId: null,
+                logSpokeName: '',
+                logScript: '',
+                logUser: null,
                 settings: { discord_webhook: '' },
 
                 init() {
@@ -578,6 +612,39 @@
                     const result = await res.json();
                     alert(result.message || result.error || 'Command triggered');
                     setTimeout(() => this.fetchStatus(spoke), 2000);
+                },
+
+                async fetchLogs(spoke, script, user = null) {
+                    this.logTitle = `${script} Console Logs (${spoke.name})`;
+                    this.logContent = 'Loading logs...';
+                    this.showLogs = true;
+                    this.logLoading = true;
+                    
+                    // Store for refresh
+                    this.logSpokeId = spoke.id;
+                    this.logSpokeName = spoke.name;
+                    this.logScript = script;
+                    this.logUser = user;
+                    
+                    try {
+                        let url = `/proxy/logs/${spoke.id}/${script}?lines=100`;
+                        if (user) url += `&user=${user}`;
+                        
+                        const res = await fetch(url, {
+                            headers: { 'Authorization': 'Bearer ' + this.token }
+                        });
+                        const data = await res.json();
+                        
+                        if (res.ok && data.logs) {
+                            this.logContent = data.logs || 'No log data available.';
+                        } else {
+                            this.logContent = `Error: ${data.detail || data.error || 'Failed to fetch logs'}`;
+                        }
+                    } catch (e) {
+                        this.logContent = `Error: ${e.message}`;
+                    } finally {
+                        this.logLoading = false;
+                    }
                 }
             }
         }

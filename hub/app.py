@@ -395,6 +395,34 @@ async def proxy_command(spoke_id: int, script: str, action: str, request: Reques
         except Exception as e:
             return {"error": str(e)}
 
+@app.get("/proxy/logs/{spoke_id}/{script}")
+async def proxy_logs(spoke_id: int, script: str, request: Request, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
+    conn.close()
+    
+    if not spoke:
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    
+    query_params = dict(request.query_params)
+    target_user = query_params.get("user")
+    lines = query_params.get("lines", 100)
+    
+    url = f"http://{ip}:{port}/logs/{script}?lines={lines}"
+    if target_user:
+        url += f"&user={target_user}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, headers={"X-API-KEY": api_key})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=49950)

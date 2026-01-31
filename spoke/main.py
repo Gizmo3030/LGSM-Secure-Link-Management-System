@@ -235,6 +235,41 @@ async def run_command(script: str, action: str, x_api_key: str = Header(...), us
     subprocess.Popen(cmd.split(), start_new_session=True)
     return {"message": f"Command '{action}' triggered for {script} as {target_user}"}
 
+@app.get("/logs/{script}")
+async def get_logs(script: str, x_api_key: str = Header(...), user: Optional[str] = None, lines: int = 100):
+    await verify_token(x_api_key)
+    
+    # Discovery user for logs
+    target_user = user
+    target_dir = None
+    
+    if not target_user:
+        for u_name, u_dir in get_target_users():
+            if os.path.exists(f"{u_dir}/log/console/{script}-console.log"):
+                target_user = u_name
+                target_dir = u_dir
+                break
+    else:
+        import pwd
+        try:
+            target_dir = pwd.getpwnam(target_user).pw_dir
+        except:
+            raise HTTPException(status_code=404, detail=f"User {target_user} not found")
+
+    if not target_user or not target_dir:
+        raise HTTPException(status_code=404, detail="Log file not found")
+
+    log_path = f"{target_dir}/log/console/{script}-console.log"
+    if not os.path.exists(log_path):
+        raise HTTPException(status_code=404, detail="Log file does not exist yet")
+
+    try:
+        cmd = ["sudo", "-n", "-u", target_user, "tail", "-n", str(lines), log_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return {"script": script, "logs": result.stdout}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.websocket("/logs/{script}")
 async def stream_logs(websocket: WebSocket, script: str):
     # Note: API Key validation for WebSockets usually happens via query params or subprotocols
