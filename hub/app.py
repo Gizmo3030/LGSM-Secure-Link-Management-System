@@ -225,6 +225,13 @@ async def download_agent():
         return FileResponse(path)
     raise HTTPException(status_code=404, detail="Agent script missing")
 
+@app.get("/install/uninstall.sh")
+async def download_uninstaller():
+    path = "static/spoke/uninstall.sh"
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="Uninstaller missing")
+
 @app.post("/spokes")
 async def add_spoke(spoke: Spoke, user=Depends(admin_required)):
     conn = sqlite3.connect(DB_PATH)

@@ -36,18 +36,33 @@
 
     <!-- Dashboard -->
     <main x-show="token" x-cloak class="p-6 max-w-6xl mx-auto">
-        <!-- Spoke Installation Helper -->
-        <section x-show="isAdmin()" class="mb-10 bg-blue-900/30 p-6 rounded-lg border border-blue-500/50 shadow-md">
-            <h2 class="text-lg font-semibold mb-2 text-blue-300 flex items-center">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                Easy Spoke Installation (Game VM)
-            </h2>
-            <p class="text-sm text-gray-300 mb-4">Run this command on your game server VM to install the agent automatically:</p>
-            <div class="relative bg-black rounded p-4 font-mono text-xs text-green-400 border border-gray-700">
-                <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh</code>
-                <button @click="copyCommand()" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+        <!-- Spoke Installation/Uninstallation Helper -->
+        <section x-show="isAdmin()" class="mb-10 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Installation -->
+            <div class="bg-blue-900/30 p-6 rounded-lg border border-blue-500/50 shadow-md">
+                <h2 class="text-lg font-semibold mb-2 text-blue-300 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Easy Spoke Installation (Game VM)
+                </h2>
+                <p class="text-sm text-gray-300 mb-4">Run this to install at <code class="text-blue-200">/opt/lgsm-spoke</code>:</p>
+                <div class="relative bg-black rounded p-4 font-mono text-xs text-green-400 border border-gray-700">
+                    <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh</code>
+                    <button @click="copyText('installCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+                </div>
             </div>
-            <p class="text-[10px] text-gray-500 mt-2 italic">* Ensure port 49950 is open on this Hub's firewall.</p>
+
+            <!-- Uninstallation -->
+            <div class="bg-red-900/10 p-6 rounded-lg border border-red-500/20 shadow-md">
+                <h2 class="text-lg font-semibold mb-2 text-red-400 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    Uninstall Spoke Agent
+                </h2>
+                <p class="text-sm text-gray-300 mb-4">Run this on the Game VM to completely remove the agent:</p>
+                <div class="relative bg-black rounded p-4 font-mono text-xs text-red-300 border border-gray-700/50">
+                    <code id="uninstallCommand">wget -O uninstall.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh</code>
+                    <button @click="copyText('uninstallCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+                </div>
+            </div>
         </section>
 
         <!-- Profile Section (Shared) -->
@@ -200,9 +215,9 @@
                     } catch (e) { return false; }
                 },
 
-                copyCommand() {
+                copyText(id) {
                     try {
-                        const cmd = document.getElementById('installCommand').innerText.trim();
+                        const cmd = document.getElementById(id).innerText.trim();
                         const el = document.createElement('textarea');
                         el.value = cmd;
                         document.body.appendChild(el);
