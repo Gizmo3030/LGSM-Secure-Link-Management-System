@@ -278,6 +278,15 @@ async def delete_spoke(spoke_id: int, user=Depends(admin_required)):
     conn.close()
     return {"message": "Spoke deleted"}
 
+@app.patch("/spokes/{spoke_id}/rename")
+async def rename_spoke(spoke_id: int, name: str, user=Depends(admin_required)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE spokes SET name=? WHERE id=?", (name, spoke_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Spoke renamed"}
+
 @app.get("/spokes")
 async def list_spokes(user=Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)

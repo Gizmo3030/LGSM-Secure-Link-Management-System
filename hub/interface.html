@@ -202,7 +202,10 @@
                             <button @click="spoke.showControl = !spoke.showControl; if(spoke.showControl) fetchTelemetry(spoke)" 
                                     :class="spoke.showControl ? 'bg-blue-500' : 'bg-blue-600'"
                                     class="hover:bg-blue-700 text-xs px-3 py-1 rounded transition">Control</button>
-                            <button x-show="isAdmin()" @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
+                            <div class="flex gap-1" x-show="isAdmin()">
+                                <button @click="renameSpoke(spoke)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-3 py-1 rounded border border-gray-600">Rename</button>
+                                <button @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
+                            </div>
                         </div>
 
                         <!-- Control Panel (Dynamic) -->
@@ -515,6 +518,23 @@
                     });
                     if (res.ok) {
                         this.loadSpokes();
+                    }
+                },
+
+                async renameSpoke(spoke) {
+                    const newName = prompt(`Enter new name for "${spoke.name}":`, spoke.name);
+                    if (!newName || newName === spoke.name) return;
+                    
+                    const res = await fetch(`/spokes/${spoke.id}/rename?name=${encodeURIComponent(newName)}`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    
+                    if (res.ok) {
+                        this.loadSpokes();
+                    } else {
+                        const data = await res.json();
+                        alert(data.detail || 'Failed to rename spoke');
                     }
                 },
 
