@@ -227,6 +227,10 @@ async def get_ui():
     with open("interface.html", "r") as f:
         return f.read()
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("favicon.ico")
+
 @app.get("/install/{filename}")
 async def download_installer(filename: str):
     # Check multiple possible locations for the scripts
