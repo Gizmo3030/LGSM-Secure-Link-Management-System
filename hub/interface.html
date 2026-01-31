@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LGSM Secure-Link Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans" x-data="hubApp()" x-init="init()">
+    <!-- Navigation -->
+    <nav class="bg-gray-800 border-b border-gray-700 p-4 flex justify-between items-center shadow-lg">
+        <h1 class="text-xl font-bold text-blue-400">LGSM Secure-Link Hub</h1>
+        <div x-show="token" class="flex items-center gap-4">
+            <button @click="showSettings = !showSettings" class="text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition">Settings</button>
+            <button @click="logout()" class="text-sm bg-red-600 hover:bg-red-700 px-3 py-1 rounded transition">Logout</button>
+        </div>
+    </nav>
+
+    <!-- Login Page -->
+    <div x-show="!token" class="flex items-center justify-center pt-20">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-96 border border-gray-700">
+            <h2 class="text-2xl font-semibold mb-6 text-center">Login</h2>
+            <div class="space-y-4">
+                <input type="text" x-model="loginForm.username" placeholder="Username" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                <input type="password" x-model="loginForm.password" placeholder="Password" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                <button @click="login()" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded font-bold transition">Sign In</button>
+            </div>
+            <p x-text="loginError" class="text-red-500 text-sm mt-4 text-center"></p>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <main x-show="token" x-cloak class="p-6 max-w-6xl mx-auto">
+        <!-- Spoke Installation Helper -->
+        <section class="mb-10 bg-blue-900/30 p-6 rounded-lg border border-blue-500/50 shadow-md">
+            <h2 class="text-lg font-semibold mb-2 text-blue-300 flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                Easy Spoke Installation (Game VM)
+            </h2>
+            <p class="text-sm text-gray-300 mb-4">Run this command on your game server VM to install the agent automatically:</p>
+            <div class="relative bg-black rounded p-4 font-mono text-xs text-green-400 border border-gray-700">
+                <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh</code>
+                <button @click="copyCommand()" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+            </div>
+            <p class="text-[10px] text-gray-500 mt-2 italic">* Ensure port 49950 is open on this Hub's firewall.</p>
+        </section>
+
+        <!-- Settings Section -->
+        <section x-show="showSettings" class="mb-10 bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-md">
+            <h2 class="text-lg font-semibold mb-4 text-blue-300">Hub Settings</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Discord Webhook URL</label>
+                    <input type="text" x-model="settings.discord_webhook" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-sm">
+                </div>
+                <button @click="saveSettings()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-bold transition">Save Settings</button>
+            </div>
+        </section>
+
+        <!-- Add Spoke Section -->
+        <section class="mb-10 bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-md">
+            <h2 class="text-lg font-semibold mb-4 text-blue-300">Link New Spoke Agent</h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <input type="text" x-model="newSpoke.name" placeholder="Server Name (e.g. Rust-Main)" class="bg-gray-700 border border-gray-600 rounded p-2 text-sm">
+                <input type="text" x-model="newSpoke.ip" placeholder="IP Address" class="bg-gray-700 border border-gray-600 rounded p-2 text-sm">
+                <input type="number" x-model="newSpoke.port" placeholder="Port (49950)" class="bg-gray-700 border border-gray-600 rounded p-2 text-sm">
+                <input type="text" x-model="newSpoke.api_key" placeholder="API Key" class="bg-gray-700 border border-gray-600 rounded p-2 text-sm">
+            </div>
+            <button @click="addSpoke()" class="mt-4 bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm font-bold transition">Add Spoke</button>
+        </section>
+
+        <!-- Fleet Status Section -->
+        <section>
+            <h2 class="text-lg font-semibold mb-6 flex items-center">
+                <span class="w-3 h-3 bg-green-500 rounded-full mr-2"></span> Entire Fleet Management
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <template x-for="spoke in spokes" :key="spoke.id">
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-5 hover:border-blue-500 transition shadow-lg">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold" x-text="spoke.name"></h3>
+                                <p class="text-xs text-gray-400" x-text="spoke.ip + ':' + spoke.port"></p>
+                            </div>
+                            <span :class="spoke.status === 'online' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'" 
+                                  class="text-[10px] uppercase font-black px-2 py-1 rounded" 
+                                  x-text="spoke.status || 'Checking...'"></span>
+                        </div>
+                        
+                        <div class="flex gap-2">
+                            <button @click="fetchStatus(spoke)" class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded">Refresh</button>
+                            <button class="bg-blue-600 hover:bg-blue-700 text-xs px-3 py-1 rounded">Control</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        function hubApp() {
+                spokes: [],
+                newSpoke: { name: '', ip: '', port: 49950, api_key: '' },
+                showSettings: false,
+                settings: { discord_webhook: '' },
+
+                init() {
+                    if (this.token) {
+                        this.loadSpokes();
+                        this.loadSettings();
+                    }
+                },
+
+                copyCommand() {
+                    const cmd = document.getElementById('installCommand').innerText;
+                    navigator.clipboard.writeText(cmd);
+                    alert('Command copied to clipboard!');
+                },
+
+                async login() {
+                    try {
+                        const res = await fetch('/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.loginForm)
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            this.token = data.access_token;
+                            localStorage.setItem('hub_token', this.token);
+                            this.loadSpokes();
+                        } else {
+                            this.loginError = data.detail || 'Login failed';
+                        }
+                    } catch (e) {
+                        this.loginError = 'Server error';
+                    }
+                },
+
+                logout() {
+                    this.token = null;
+                    localStorage.removeItem('hub_token');
+                },
+
+                async loadSpokes() {
+                    const res = await fetch('/spokes', {
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    if (res.ok) {
+                        this.spokes = await res.json();
+                        this.spokes.forEach(s => this.fetchStatus(s));
+                    }
+                },
+
+                async loadSettings() {
+                    const res = await fetch('/settings', {
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    if (res.ok) {
+                        this.settings = await res.json();
+                    }
+                },
+
+                async saveSettings() {
+                    const res = await fetch('/settings', {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + this.token 
+                        },
+                        body: JSON.stringify(this.settings)
+                    });
+                    if (res.ok) {
+                        alert('Settings saved');
+                        this.showSettings = false;
+                    }
+                },
+
+                async addSpoke() {
+                    const res = await fetch('/spokes', {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + this.token 
+                        },
+                        body: JSON.stringify(this.newSpoke)
+                    });
+                    if (res.ok) {
+                        this.loadSpokes();
+                        this.newSpoke = { name: '', ip: '', port: 49950, api_key: '' };
+                    }
+                },
+
+                async fetchStatus(spoke) {
+                    const res = await fetch(`/proxy/status/${spoke.id}`, {
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    const statusData = await res.json();
+                    const index = this.spokes.findIndex(s => s.id === spoke.id);
+                    if (index !== -1) {
+                        this.spokes[index].status = statusData.status;
+                        this.$nextTick(() => { this.spokes = [...this.spokes]; });
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

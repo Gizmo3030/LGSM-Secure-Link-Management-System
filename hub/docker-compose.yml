@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  hub:
+    build: .
+    ports:
+      - "49950:49950"
+    volumes:
+      - ./hub.db:/app/hub.db
+      - ../spoke:/app/static/spoke
+    environment:
+      - SECRET_KEY=lgsm-secure-key-123
+    restart: always
