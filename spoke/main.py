@@ -89,15 +89,30 @@ async def get_status(x_api_key: str = Header(...)):
         for u_name, u_dir in targets:
             # 1. Discover all possible LGSM scripts in the home directory
             scripts = []
+            excluded_files = ['setup.sh', 'uninstall.sh', 'main.py', 'linuxgsm.sh', 'lgsm', 'functions', 'log', 'backups', 'serverfiles', 'lgsm-db']
             try:
                 for item in os.listdir(u_dir):
                     item_path = os.path.join(u_dir, item)
-                    # Heuristic: executable file, not a directory, and not common system files
+                    # Heuristic: executable file, not a directory, and not common system or LGSM core files
                     if (os.path.isfile(item_path) and 
                         os.access(item_path, os.X_OK) and 
                         not item.startswith('.') and
-                        item not in ['setup.sh', 'uninstall.sh', 'main.py']):
-                        scripts.append(item)
+                        item not in excluded_files):
+                        
+                        # Only include if it ends with 'server' or it's a known LGSM script type
+                        # Or if it contains 'lgsm' or './functions' in its content (lite check)
+                        is_lgsm = item.endswith('server')
+                        if not is_lgsm:
+                            try:
+                                with open(item_path, 'r', errors='ignore') as f:
+                                    head = f.read(500)
+                                    if 'LGSM' in head or 'linuxgsm' in head or 'check_deps' in head:
+                                        is_lgsm = True
+                            except:
+                                pass
+                        
+                        if is_lgsm:
+                            scripts.append(item)
             except Exception:
                 pass
 
@@ -105,27 +120,46 @@ async def get_status(x_api_key: str = Header(...)):
             active_sessions = []
             try:
                 # Check tmux for this user
+                # We use -L default to ensure we are looking at the right socket if multiple exist
                 result = subprocess.run(
                     ["sudo", "-n", "-u", u_name, "tmux", "ls"], 
                     capture_output=True, text=True, timeout=2
                 )
+                
+                # LGSM sessions usually match the script name exactly
                 if result.returncode == 0:
                     for line in result.stdout.strip().split("\n"):
-                        if line:
-                            # Format: session_name: 1 windows (created ...)
-                            session_name = line.split(":")[0]
+                        if ":" in line:
+                            session_name = line.split(":")[0].strip()
                             active_sessions.append(session_name)
+                elif "no server running" in result.stderr.lower() or "failed to connect" in result.stderr.lower():
+                    # This is a normal state, just means no tmux sessions exist for this user
+                    pass
             except Exception:
                 pass
 
             # 3. Combine into instance objects
             for script in scripts:
+                # LGSM session names are often the script name
+                is_running = script in active_sessions
+                
                 all_instances.append({
                     "user": u_name,
                     "script": script,
-                    "session": script if script in active_sessions else None,
-                    "status": "running" if script in active_sessions else "stopped"
+                    "session": script if is_running else None,
+                    "status": "running" if is_running else "stopped"
                 })
+
+            # 4. Add any "Zombie" sessions (tmux sessions with no matching script)
+            for session in active_sessions:
+                if session not in scripts:
+                    all_instances.append({
+                        "user": u_name,
+                        "script": session,
+                        "session": session,
+                        "status": "running",
+                        "is_zombie": True
+                    })
 
         return {"status": "online", "sessions": all_instances}
     except Exception as e:
