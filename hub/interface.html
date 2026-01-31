@@ -159,6 +159,7 @@
                         <div class="flex gap-2">
                             <button @click="fetchStatus(spoke)" class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded">Refresh</button>
                             <button class="bg-blue-600 hover:bg-blue-700 text-xs px-3 py-1 rounded">Control</button>
+                            <button x-show="isAdmin()" @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
                         </div>
                     </div>
                 </template>
@@ -200,9 +201,18 @@
                 },
 
                 copyCommand() {
-                    const cmd = document.getElementById('installCommand').innerText;
-                    navigator.clipboard.writeText(cmd);
-                    alert('Command copied to clipboard!');
+                    try {
+                        const cmd = document.getElementById('installCommand').innerText.trim();
+                        const el = document.createElement('textarea');
+                        el.value = cmd;
+                        document.body.appendChild(el);
+                        el.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(el);
+                        alert('Command copied to clipboard!');
+                    } catch (err) {
+                        alert('Failed to copy. Please select and copy manually.');
+                    }
                 },
 
                 async login() {
@@ -340,6 +350,17 @@
                     if (res.ok) {
                         this.spokes = await res.json();
                         this.spokes.forEach(s => this.fetchStatus(s));
+                    }
+                },
+
+                async deleteSpoke(id) {
+                    if (!confirm('Are you sure you want to delete this spoke configuration?')) return;
+                    const res = await fetch(`/spokes/${id}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    if (res.ok) {
+                        this.loadSpokes();
                     }
                 },
 

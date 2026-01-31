@@ -7,7 +7,14 @@ set -e
 
 echo "Starting LGSM Spoke Setup..."
 
-# 0. Fetch main.py if missing
+# 0. Create Application Directory
+APP_DIR="/opt/lgsm-spoke"
+echo "Creating application directory at $APP_DIR..."
+sudo mkdir -p "$APP_DIR"
+sudo chown $(whoami):$(whoami) "$APP_DIR"
+cd "$APP_DIR"
+
+# 1. Fetch main.py if missing
 if [ ! -f "main.py" ]; then
     read -p "Enter Hub IP to fetch agent script [optional]: " HUB_IP_FETCH
     if [ -n "$HUB_IP_FETCH" ]; then
@@ -16,22 +23,22 @@ if [ ! -f "main.py" ]; then
     fi
 fi
 
-# 1. Install Dependencies
+# 2. Install Dependencies
 echo "Installing system dependencies..."
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip tmux
+sudo apt-get install -y python3-venv python3-pip tmux curl
 
-# 2. Setup Python Virtual Environment
+# 3. Setup Python Virtual Environment
 echo "Setting up Python virtual environment..."
 python3 -m venv venv
 source venv/bin/activate
 pip install fastapi uvicorn psutil
 
-# 3. Port Selection
+# 4. Port Selection
 read -p "Enter management port [default 49950]: " SPOKE_PORT
 SPOKE_PORT=${SPOKE_PORT:-49950}
 
-# 4. Firewall Hardening (UFW)
+# 5. Firewall Hardening (UFW)
 if command -v ufw >/dev/null 2>&1; then
     read -p "Enter Hub Public IP (to allow management traffic): " HUB_IP
     if [ -n "$HUB_IP" ]; then
@@ -45,12 +52,12 @@ else
     echo "Please ensure port $SPOKE_PORT is open on your network firewall."
 fi
 
-# 5. Generate API Key
+# 6. Generate API Key
 API_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 echo "API_KEY=$API_KEY" > .env
 echo "PORT=$SPOKE_PORT" >> .env
 
-# 6. Persistence (systemd)
+# 7. Persistence (systemd)
 echo "Setting up systemd service..."
 USER_NAME=$(whoami)
 SERVICE_FILE="/etc/systemd/system/lgsm-spoke.service"
@@ -62,10 +69,10 @@ After=network.target
 
 [Service]
 User=$USER_NAME
-WorkingDirectory=$(pwd)
-ExecStart=$(pwd)/venv/bin/uvicorn main:app --host 0.0.0.0 --port $SPOKE_PORT
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $SPOKE_PORT
 Restart=always
-EnvironmentFile=$(pwd)/.env
+EnvironmentFile=$APP_DIR/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -75,9 +82,21 @@ sudo systemctl daemon-reload
 sudo systemctl enable lgsm-spoke
 sudo systemctl start lgsm-spoke
 
+# 8. Auto-Registration
+if [ -n "$HUB_IP_FETCH" ]; then
+    echo "Attempting auto-registration with Hub..."
+    SPOKE_IP=$(hostname -I | awk '{print $1}')
+    SPOKE_NAME=$(hostname)
+    
+    # Try to register
+    curl -X POST "http://$HUB_IP_FETCH:49950/spokes/register" \
+         -H "Content-Type: application/json" \
+         -d "{\"name\": \"$SPOKE_NAME\", \"ip\": \"$SPOKE_IP\", \"port\": $SPOKE_PORT, \"api_key\": \"$API_KEY\"}" || echo "Auto-registration failed. Please add manually."
+fi
+
 echo "------------------------------------------------"
 echo "Setup Complete!"
+echo "Spoke is running and installed at $APP_DIR"
 echo "Spoke is running on port $SPOKE_PORT"
 echo "API KEY: $API_KEY"
-echo "Please add this IP and Key to your Hub Dashboard."
 echo "------------------------------------------------"

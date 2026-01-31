@@ -235,6 +235,32 @@ async def add_spoke(spoke: Spoke, user=Depends(admin_required)):
     conn.close()
     return {"message": "Spoke added"}
 
+@app.post("/spokes/register")
+async def register_spoke(spoke: Spoke):
+    # Public endpoint for auto-registration from setup.sh
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Check if already exists by IP/Port
+    c.execute("SELECT id FROM spokes WHERE ip=? AND port=?", (spoke.ip, spoke.port))
+    if c.fetchone():
+        conn.close()
+        return {"message": "Spoke already registered"}
+    
+    c.execute("INSERT INTO spokes (name, ip, port, api_key) VALUES (?, ?, ?, ?)",
+              (spoke.name, spoke.ip, spoke.port, spoke.api_key))
+    conn.commit()
+    conn.close()
+    return {"message": "Spoke auto-registered"}
+
+@app.delete("/spokes/{spoke_id}")
+async def delete_spoke(spoke_id: int, user=Depends(admin_required)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM spokes WHERE id=?", (spoke_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Spoke deleted"}
+
 @app.get("/spokes")
 async def list_spokes(user=Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
