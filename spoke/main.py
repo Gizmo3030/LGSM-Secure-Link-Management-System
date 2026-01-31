@@ -83,10 +83,26 @@ async def verify_token(x_api_key: str = Header(...)):
 async def get_status(x_api_key: str = Header(...)):
     await verify_token(x_api_key)
     try:
-        all_sessions = []
+        all_instances = []
         targets = get_target_users()
         
         for u_name, u_dir in targets:
+            # 1. Discover all possible LGSM scripts in the home directory
+            scripts = []
+            try:
+                for item in os.listdir(u_dir):
+                    item_path = os.path.join(u_dir, item)
+                    # Heuristic: executable file, not a directory, and not common system files
+                    if (os.path.isfile(item_path) and 
+                        os.access(item_path, os.X_OK) and 
+                        not item.startswith('.') and
+                        item not in ['setup.sh', 'uninstall.sh', 'main.py']):
+                        scripts.append(item)
+            except Exception:
+                pass
+
+            # 2. Check which ones have active tmux sessions
+            active_sessions = []
             try:
                 # Check tmux for this user
                 result = subprocess.run(
@@ -98,15 +114,20 @@ async def get_status(x_api_key: str = Header(...)):
                         if line:
                             # Format: session_name: 1 windows (created ...)
                             session_name = line.split(":")[0]
-                            all_sessions.append({
-                                "user": u_name,
-                                "dir": u_dir,
-                                "session": session_name
-                            })
+                            active_sessions.append(session_name)
             except Exception:
-                continue
+                pass
 
-        return {"status": "online", "sessions": all_sessions}
+            # 3. Combine into instance objects
+            for script in scripts:
+                all_instances.append({
+                    "user": u_name,
+                    "script": script,
+                    "session": script if script in active_sessions else None,
+                    "status": "running" if script in active_sessions else "stopped"
+                })
+
+        return {"status": "online", "sessions": all_instances}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

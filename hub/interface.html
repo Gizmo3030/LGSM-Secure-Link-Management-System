@@ -165,6 +165,14 @@
                 Entire Fleet Management
                 <span class="ml-2 text-xs text-gray-500" x-text="'(' + onlineSpokesCount() + '/' + spokes.length + ' Online)'"></span>
             </h2>
+            
+            <template x-if="spokes.length === 0">
+                <div class="bg-gray-800 border border-dashed border-gray-700 rounded-lg p-10 text-center">
+                    <p class="text-gray-500 mb-4">No spokes connected yet.</p>
+                    <p class="text-xs text-gray-600">Use the "Easy Spoke Installation" command above on your game servers or add them manually.</p>
+                </div>
+            </template>
+
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <template x-for="spoke in spokes" :key="spoke.id">
                     <div class="bg-gray-800 border border-gray-700 rounded-lg p-5 hover:border-blue-500 transition shadow-lg">
@@ -173,6 +181,7 @@
                                 <h3 class="text-lg font-bold" x-text="spoke.name"></h3>
                                 <p class="text-xs text-gray-400" x-text="spoke.ip + ':' + spoke.port"></p>
                                 <p class="text-[9px] text-gray-500 mt-1" x-show="spoke.last_seen" x-text="'Last checked: ' + new Date(spoke.last_seen + 'Z').toLocaleString()"></p>
+                                <p class="text-[9px] text-red-500 mt-1" x-show="spoke.error" x-text="'Error: ' + spoke.error"></p>
                             </div>
                             <span :class="spoke.status === 'online' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'" 
                                   class="text-[10px] uppercase font-black px-2 py-1 rounded" 
@@ -214,32 +223,38 @@
                                 </div>
                             </div>
 
-                            <!-- Sessions & Commands -->
-                            <div>
-                                <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">Active LGSM Sessions</h4>
-                                <div class="space-y-2">
-                                    <template x-if="!spoke.sessions || spoke.sessions.length === 0">
-                                        <p class="text-xs text-gray-600 italic">No active sessions found.</p>
-                                    </template>
-                                    <template x-for="session in spoke.sessions" :key="session.session + session.user">
-                                        <div class="bg-gray-900 p-2 rounded flex justify-between items-center">
-                                            <div>
-                                                <span class="text-xs font-mono text-green-500" x-text="session.session"></span>
-                                                <span class="text-[9px] text-gray-500 block" x-text="'user: ' + session.user"></span>
+                        <!-- Sessions & Commands -->
+                        <div>
+                            <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">LGSM Game Instances</h4>
+                            <div class="space-y-2">
+                                <template x-if="!spoke.sessions || spoke.sessions.length === 0">
+                                    <p class="text-xs text-gray-600 italic">No LGSM scripts discovered on this host.</p>
+                                </template>
+                                <template x-for="session in spoke.sessions" :key="session.script + session.user">
+                                    <div class="bg-gray-900 p-2 rounded flex justify-between items-center border-l-2" 
+                                         :class="session.status === 'running' ? 'border-green-500' : 'border-gray-600'">
+                                        <div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-mono font-bold" :class="session.status === 'running' ? 'text-green-400' : 'text-gray-400'" x-text="session.script"></span>
+                                                <span :class="session.status === 'running' ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'" 
+                                                      class="text-[8px] uppercase px-1 rounded" x-text="session.status"></span>
                                             </div>
-                                            <div class="flex gap-1">
-                                                <button @click="runCommand(spoke, session.session, 'start', session.user)" class="bg-green-700 hover:bg-green-600 text-[10px] px-2 py-1 rounded">Start</button>
-                                                <button @click="runCommand(spoke, session.session, 'stop', session.user)" class="bg-red-700 hover:bg-red-600 text-[10px] px-2 py-1 rounded">Stop</button>
-                                                <button @click="runCommand(spoke, session.session, 'update', session.user)" class="bg-blue-700 hover:bg-blue-600 text-[10px] px-2 py-1 rounded">Update</button>
-                                            </div>
+                                            <span class="text-[9px] text-gray-500 block" x-text="'user: ' + session.user"></span>
                                         </div>
-                                    </template>
-                                </div>
+                                        <div class="flex gap-1">
+                                            <button x-show="session.status !== 'running'" @click="runCommand(spoke, session.script, 'start', session.user)" class="bg-green-700 hover:bg-green-600 text-[9px] px-2 py-1 rounded">START</button>
+                                            <button x-show="session.status === 'running'" @click="runCommand(spoke, session.script, 'stop', session.user)" class="bg-red-700 hover:bg-red-600 text-[9px] px-2 py-1 rounded">STOP</button>
+                                            <button @click="runCommand(spoke, session.script, 'update', session.user)" class="bg-blue-700 hover:bg-blue-600 text-[9px] px-2 py-1 rounded">UPDATE</button>
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
+                        </div>
 
                             <!-- Manual Script Trigger -->
                             <div class="pt-2 border-t border-gray-700/50">
-                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Game Server Controls</label>
+                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Fallback / Manual Command</label>
+                                <p class="text-[8px] text-gray-500 mb-2 leading-tight">If a script isn't auto-discovered above, enter its filename here.</p>
                                 <div class="space-y-2">
                                     <input type="text" x-model="spoke.manualScript" placeholder="script name (e.g. rustserver)" class="w-full bg-gray-900 text-xs border border-gray-700 rounded px-2 py-1 outline-none focus:border-blue-500">
                                     <div class="grid grid-cols-3 gap-1">
@@ -522,10 +537,14 @@
                         if (index !== -1) {
                             this.spokes[index].status = statusData.status;
                             this.spokes[index].sessions = statusData.sessions || [];
+                            this.spokes[index].error = statusData.error || null;
                             if (statusData.last_seen) this.spokes[index].last_seen = statusData.last_seen;
                         }
                     } catch (e) {
-                        if (index !== -1) this.spokes[index].status = 'offline';
+                        if (index !== -1) {
+                            this.spokes[index].status = 'offline';
+                            this.spokes[index].error = 'Failed to connect to proxy';
+                        }
                     } finally {
                         if (index !== -1) {
                             this.spokes[index].refreshing = false;
