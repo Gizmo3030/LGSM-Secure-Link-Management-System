@@ -6,7 +6,11 @@
 *.sqlite
 *.sqlite3
 .env
-.env.*
+.env.local
+.env.*.local
+
+# Keep example/template files
+!.env.example
 
 # Python
 __pycache__/
