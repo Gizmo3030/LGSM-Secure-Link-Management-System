@@ -19,7 +19,7 @@ fi
 # 1. Install Dependencies
 echo "Installing system dependencies..."
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip ufm tmux
+sudo apt-get install -y python3-venv python3-pip tmux
 
 # 2. Setup Python Virtual Environment
 echo "Setting up Python virtual environment..."
@@ -32,12 +32,17 @@ read -p "Enter management port [default 49950]: " SPOKE_PORT
 SPOKE_PORT=${SPOKE_PORT:-49950}
 
 # 4. Firewall Hardening (UFW)
-read -p "Enter Hub Public IP (to allow management traffic): " HUB_IP
-if [ -n "$HUB_IP" ]; then
-    echo "Allowing traffic from $HUB_IP on port $SPOKE_PORT..."
-    sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT"
+if command -v ufw >/dev/null 2>&1; then
+    read -p "Enter Hub Public IP (to allow management traffic): " HUB_IP
+    if [ -n "$HUB_IP" ]; then
+        echo "Allowing traffic from $HUB_IP on port $SPOKE_PORT using UFW..."
+        sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT"
+    else
+        echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+    fi
 else
-    echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+    echo "Notice: UFW not found. Skipping firewall configuration."
+    echo "Please ensure port $SPOKE_PORT is open on your network firewall."
 fi
 
 # 5. Generate API Key
