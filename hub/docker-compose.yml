@@ -1,6 +1,6 @@
 services:
   hub:
-    container_name: "LGSM (SLMS)"
+    container_name: "LGSM-SLMS"
     build: .
     ports:
       - "49950:49950"
