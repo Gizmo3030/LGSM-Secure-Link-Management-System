@@ -3,7 +3,7 @@ import sqlite3
 import jwt
 import datetime
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from pydantic import BaseModel
@@ -36,7 +36,8 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS spokes 
-                 (id INTEGER PRIMARY KEY, name TEXT, ip TEXT, port INTEGER, api_key TEXT)''')
+                 (id INTEGER PRIMARY KEY, name TEXT, ip TEXT, port INTEGER, api_key TEXT, 
+                  status TEXT DEFAULT 'offline', last_seen TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY, value TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -47,6 +48,14 @@ def init_db():
     columns = [column[1] for column in c.fetchall()]
     if 'role' not in columns:
         c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+
+    # Migration for spokes table
+    c.execute("PRAGMA table_info(spokes)")
+    spoke_columns = [column[1] for column in c.fetchall()]
+    if 'status' not in spoke_columns:
+        c.execute("ALTER TABLE spokes ADD COLUMN status TEXT DEFAULT 'offline'")
+    if 'last_seen' not in spoke_columns:
+        c.execute("ALTER TABLE spokes ADD COLUMN last_seen TEXT")
 
     # Create default user if not exists
     c.execute("SELECT * FROM users WHERE username='admin'")
@@ -206,42 +215,47 @@ async def heartbeat_monitor():
         c = conn.cursor()
         c.execute("SELECT id, name, ip, port, api_key FROM spokes")
         spokes = c.fetchall()
-        conn.close()
         
         async with httpx.AsyncClient() as client:
             for sid, name, ip, port, api_key in spokes:
                 try:
                     resp = await client.get(f"http://{ip}:{port}/status", headers={"X-API-KEY": api_key}, timeout=5)
+                    status = "online" if resp.status_code == 200 else "offline"
                     if resp.status_code != 200:
                         await send_discord_alert(f"⚠️ Spoke Alert: {name} ({ip}) is unresponsive (HTTP {resp.status_code})")
                 except Exception:
+                    status = "offline"
                     await send_discord_alert(f"🚨 Spoke CRITICAL: {name} ({ip}) is OFFLINE")
+                
+                c.execute("UPDATE spokes SET status=?, last_seen=? WHERE id=?", 
+                          (status, datetime.datetime.utcnow().isoformat(), sid))
+        
+        conn.commit()
+        conn.close()
 
 @app.get("/", response_class=HTMLResponse)
 async def get_ui():
     with open("interface.html", "r") as f:
         return f.read()
 
-@app.get("/install/setup.sh")
-async def download_setup():
-    path = "static/spoke/setup.sh"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Installer missing")
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("favicon.ico")
 
-@app.get("/install/main.py")
-async def download_agent():
-    path = "static/spoke/main.py"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Agent script missing")
-
-@app.get("/install/uninstall.sh")
-async def download_uninstaller():
-    path = "static/spoke/uninstall.sh"
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="Uninstaller missing")
+@app.get("/install/{filename}")
+async def download_installer(filename: str):
+    # Check multiple possible locations for the scripts
+    paths = [
+        f"static/spoke/{filename}",      # Docker location
+        f"../spoke/{filename}",           # Local dev location
+        f"spoke/{filename}"               # Direct relative location
+    ]
+    
+    for path in paths:
+        if os.path.exists(path):
+            return FileResponse(path)
+            
+    raise HTTPException(status_code=404, detail=f"Installer {filename} missing")
 
 @app.post("/spokes")
 async def add_spoke(spoke: Spoke, user=Depends(admin_required)):
@@ -279,14 +293,23 @@ async def delete_spoke(spoke_id: int, user=Depends(admin_required)):
     conn.close()
     return {"message": "Spoke deleted"}
 
+@app.patch("/spokes/{spoke_id}/rename")
+async def rename_spoke(spoke_id: int, name: str, user=Depends(admin_required)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE spokes SET name=? WHERE id=?", (name, spoke_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Spoke renamed"}
+
 @app.get("/spokes")
 async def list_spokes(user=Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, name, ip, port, api_key FROM spokes")
+    c.execute("SELECT id, name, ip, port, api_key, status, last_seen FROM spokes")
     rows = c.fetchall()
     conn.close()
-    return [{"id": r[0], "name": r[1], "ip": r[2], "port": r[3], "api_key": r[4]} for r in rows]
+    return [{"id": r[0], "name": r[1], "ip": r[2], "port": r[3], "api_key": r[4], "status": r[5], "last_seen": r[6]} for r in rows]
 
 @app.get("/settings")
 async def get_settings(user=Depends(admin_required)):
@@ -323,6 +346,38 @@ async def proxy_status(spoke_id: int, user=Depends(get_current_user)):
     c = conn.cursor()
     c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
     spoke = c.fetchone()
+    
+    if not spoke:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(f"http://{ip}:{port}/status", headers={"X-API-KEY": api_key})
+            data = resp.json()
+            status = data.get("status", "offline")
+            last_seen = datetime.datetime.utcnow().isoformat()
+            c.execute("UPDATE spokes SET status=?, last_seen=? WHERE id=?", 
+                      (status, last_seen, spoke_id))
+            conn.commit()
+            conn.close()
+            data["last_seen"] = last_seen
+            return data
+        except Exception as e:
+            last_seen = datetime.datetime.utcnow().isoformat()
+            c.execute("UPDATE spokes SET status='offline', last_seen=? WHERE id=?", 
+                      (last_seen, spoke_id))
+            conn.commit()
+            conn.close()
+            return {"status": "offline", "error": str(e), "last_seen": last_seen}
+
+@app.get("/proxy/telemetry/{spoke_id}")
+async def proxy_telemetry(spoke_id: int, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
     conn.close()
     
     if not spoke:
@@ -331,10 +386,72 @@ async def proxy_status(spoke_id: int, user=Depends(get_current_user)):
     ip, port, api_key = spoke
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(f"http://{ip}:{port}/status", headers={"X-API-KEY": api_key})
+            resp = await client.get(f"http://{ip}:{port}/telemetry", headers={"X-API-KEY": api_key})
             return resp.json()
         except Exception as e:
-            return {"status": "offline", "error": str(e)}
+            return {"error": str(e)}
+
+@app.post("/proxy/command/{spoke_id}/{script}/{action}")
+async def proxy_command(spoke_id: int, script: str, action: str, request: Request, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
+    conn.close()
+    
+    if not spoke:
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    
+    # Extract 'user' from query params if present
+    query_params = dict(request.query_params)
+    target_user = query_params.get("user")
+    
+    url = f"http://{ip}:{port}/command/{script}/{action}"
+    if target_user:
+        url += f"?user={target_user}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, headers={"X-API-KEY": api_key})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+@app.get("/proxy/logs/{spoke_id}/{script}")
+async def proxy_logs(spoke_id: int, script: str, request: Request, user=Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ip, port, api_key FROM spokes WHERE id=?", (spoke_id,))
+    spoke = c.fetchone()
+    conn.close()
+    
+    if not spoke:
+        raise HTTPException(status_code=404, detail="Spoke not found")
+    
+    ip, port, api_key = spoke
+    
+    query_params = dict(request.query_params)
+    target_user = query_params.get("user")
+    lines = query_params.get("lines", 100)
+    
+    url = f"http://{ip}:{port}/logs/{script}?lines={lines}"
+    if target_user:
+        url += f"&user={target_user}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, headers={"X-API-KEY": api_key})
+            # Return same status code as agent if it's not successful
+            if resp.status_code != 200:
+                try:
+                    return JSONResponse(status_code=resp.status_code, content=resp.json())
+                except:
+                    return JSONResponse(status_code=resp.status_code, content={"error": "Agent returned error without JSON body"})
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

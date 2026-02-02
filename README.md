@@ -1,59 +1,79 @@
-# LGSM Secure-Link Management System
+# 🎮 LGSM Secure-Link Management System
 
-A professional-grade, two-part management system for LinuxGSM (LGSM).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Architecture
+![Dashboard Screenshot](screenshot.png)
 
-1.  **The Spoke**: A headless, lightweight agent installed on game server VMs.
-2.  **The Hub**: A secure, Dockerized centralized dashboard to monitor and control all Spokes.
+A centralized management system for [LinuxGSM](https://linuxgsm.com/) (LGSM) that provides a secure dashboard to monitor and control multiple game servers from a single location.
 
-## Components
+## 🏗️ Architecture
 
-### Spoke
-- **`setup.sh`**: One-click installer.
-- **`main.py`**: high-performance Python API (FastAPI) interacting with LGSM.
+The system consists of two main components:
+
+1.  **The Hub**: A secure, centralized dashboard (Dockerized) used to monitor and control all spokes.
+2.  **The Spoke**: A lightweight, headless agent installed on each individual game server VM.
+
+## 🚀 Features
+
+- **Unified Dashboard**: View your entire fleet of game servers at a glance.
+- **Instance Control**: Start, stop, restart, and update LGSM instances directly from the UI.
+- **Real-Time Logs**: View the last 100 lines of console output for each server.
+- **Telemetric Monitoring**: Track CPU, RAM, and Disk usage across all game VMs.
+- **Security First**: 
+    - JWT-based authentication for the Hub.
+    - Hashed passwords via BCrypt.
+    - API Key validation between Hub and Spokes.
+    - Optional firewall hardening (UFW support in setup).
+- **Discord Integration**: Get instant notifications via webhooks when a server goes offline.
+- **Auto-Discovery**: Spokes automatically detect LGSM scripts in `/home` directories.
+
+## 🛠️ Components
 
 ### Hub
-- **`app.py`**: Dashboard backend (FastAPI).
-- **`interface.html`**: Dashboard UI (Tailwind CSS).
-- **`docker-compose.yml` & `Dockerfile`**: Containerization logic.
+- **Python / FastAPI**: High-performance backend.
+- **SQLite**: lightweight database for spoke configurations and user management.
+- **Tailwind CSS / Alpine.js**: Modern, responsive dashboard UI.
+- **Dockerized**: Easy deployment with `docker-compose`.
 
-## Setup Instructions
+### Spoke
+- **Python / FastAPI**: lightweight agent.
+- **Systemd Integration**: Runs as a background service for high availability.
+- **No Global Sudo Required**: Respects security constraints while still providing full control.
 
-### Hub Setup (Central Dashboard)
-1. Navigate to the `hub` directory.
-2. Run `docker compose up -d`.
-3. Access the dashboard at `http://localhost:49950` (default port).
+## ⚙️ Setup Instructions
 
-### Spoke Setup (Game Server VM)
-**Easy Way (One-Liner):**
-1. Ensure the Hub is running.
-2. Run this command on your Game Server VM:
-   ```bash
-   wget -O setup.sh http://YOUR_HUB_IP:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh
-   ```
-3. Follow the prompts (enter Hub IP when asked to fetch `main.py`).
+### 1. Hub Setup (Central Dashboard)
 
-**Manual Way:**
-1. Copy `spoke/setup.sh` and `spoke/main.py` to the game server VM.
-2. Run `chmod +x setup.sh && ./setup.sh`.
-3. Follow the prompts to configure the Hub IP and API keys.
+1.  Navigate to the `hub` directory.
+2.  Run the system with Docker:
+    ```bash
+    docker compose up -d
+    ```
+3.  Access the dashboard at `http://YOUR_HUB_IP:49950`.
+4.  Default credentials: `admin` / `admin123` (Change these immediately in settings!).
 
-## Features
-- Unified dashboard for all LGSM instances.
-- High-speed status reporting via `tmux` checks.
-- Asynchronous command execution (start, stop, restart, etc.).
-- Real-time log streaming via WebSockets.
-- **Security**: JWT authentication, hashed passwords (bcrypt), and IP whitelisting for Spokes.
-- **Discord Integration**: Webhook alerts for outages or critical errors.
-- **Heartbeat Monitor**: Automated health checks every 60 seconds.
+### 2. Spoke Setup (Game Server VM)
 
-## Advanced Usage
+Run the one-liner on your game server:
+```bash
+wget -O setup.sh http://YOUR_HUB_IP:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh YOUR_HUB_IP
+```
+*Note: Replace `YOUR_HUB_IP` with the IP address of your Hub server.*
 
-### Discord Alerts
-1. Go to **Settings** in the Hub Dashboard.
-2. Paste your Discord Webhook URL.
-3. The Hub will now ping your Discord if a Spoke goes offline.
+The installer will:
+- Install system dependencies (`python3-venv`, `tmux`, etc.).
+- Set up a virtual environment.
+- Generate a unique API key.
+- Register itself with the Hub.
+- Setup a systemd service to start on boot.
 
-### Bulk Actions
-The dashboard allows you to view the status of the entire fleet. Standard actions like "Restart All" can be triggered via the Hub API (WIP UI button).
+## 🛡️ License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details. Free to use, modify, and distribute.
+
+## 🤝 Contributing
+
+Feel free to open issues or submit pull requests to improve the system!
+
+---
+*Developed by Gizmo3030*

@@ -14,12 +14,22 @@ sudo mkdir -p "$APP_DIR"
 sudo chown $(whoami):$(whoami) "$APP_DIR"
 cd "$APP_DIR"
 
-# 1. Fetch main.py if missing
+# 1. Configuration & Fetching
+# Support for Command Line Arguments
+# Usage: ./setup.sh [HUB_IP] [GAME_USERS]
+HUB_IP=${1:-""}
+GAME_USERS=${2:-""}
+
+if [ -z "$HUB_IP" ]; then
+    read -p "Enter Hub IP Address [e.g. 192.168.1.100, optional]: " HUB_IP
+fi
+
 if [ ! -f "main.py" ]; then
-    read -p "Enter Hub IP to fetch agent script [optional]: " HUB_IP_FETCH
-    if [ -n "$HUB_IP_FETCH" ]; then
+    if [ -n "$HUB_IP" ]; then
         echo "Fetching agent core from Hub..."
-        wget -q -O main.py "http://$HUB_IP_FETCH:49950/install/main.py"
+        wget -q -O main.py "http://$HUB_IP:49950/install/main.py"
+    else
+        echo "Warning: main.py is missing and no Hub IP provided to fetch it."
     fi
 fi
 
@@ -32,20 +42,33 @@ sudo apt-get install -y python3-venv python3-pip tmux curl
 echo "Setting up Python virtual environment..."
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn psutil
+pip install fastapi uvicorn psutil httpx
 
-# 4. Port Selection
+# 4. Port & User Selection
 read -p "Enter management port [default 49950]: " SPOKE_PORT
 SPOKE_PORT=${SPOKE_PORT:-49950}
 
+if [ -z "$GAME_USERS" ]; then
+    echo "--- Multi-User Configuration ---"
+    echo "You can specify a comma-separated list of users (e.g. pzserver,rustserver)"
+    echo "Or leave blank to auto-discover all users in /home."
+    read -p "Enter Game Users to monitor [default: auto]: " GAME_USERS
+    GAME_USERS=${GAME_USERS:-"auto"}
+fi
+
 # 5. Firewall Hardening (UFW)
 if command -v ufw >/dev/null 2>&1; then
-    read -p "Enter Hub Public IP (to allow management traffic): " HUB_IP
     if [ -n "$HUB_IP" ]; then
         echo "Allowing traffic from $HUB_IP on port $SPOKE_PORT using UFW..."
         sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT"
     else
-        echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+        read -p "Enter Hub Public IP (to allow management traffic) [optional]: " ALT_HUB_IP
+        if [ -n "$ALT_HUB_IP" ]; then
+             sudo ufw allow from "$ALT_HUB_IP" to any port "$SPOKE_PORT"
+             HUB_IP=$ALT_HUB_IP
+        else
+            echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+        fi
     fi
 else
     echo "Notice: UFW not found. Skipping firewall configuration."
@@ -56,6 +79,12 @@ fi
 API_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 echo "API_KEY=$API_KEY" > .env
 echo "PORT=$SPOKE_PORT" >> .env
+if [ -n "$HUB_IP" ]; then
+    echo "HUB_IP=$HUB_IP" >> .env
+fi
+if [ -n "$GAME_USERS" ]; then
+    echo "GAME_USERS=$GAME_USERS" >> .env
+fi
 
 # 7. Persistence (systemd)
 echo "Setting up systemd service..."
@@ -82,14 +111,44 @@ sudo systemctl daemon-reload
 sudo systemctl enable lgsm-spoke
 sudo systemctl start lgsm-spoke
 
+# 7.5 Setup Sudo Permissions (Auto-Discovery)
+echo "Configuring sudoers for LGSM management..."
+CURRENT_USER=$(whoami)
+SUDOERS_FILE="/etc/sudoers.d/lgsm-spoke-$CURRENT_USER"
+TMUX_PATH=$(which tmux || echo "/usr/bin/tmux")
+TAIL_PATH=$(which tail || echo "/usr/bin/tail")
+
+if [ "$GAME_USERS" = "auto" ]; then
+    # Allow management of ANY user on the system
+    # This is safe because only the spoke (authenticated with API KEY) can invoke these
+    sudo bash -c "cat > $SUDOERS_FILE" <<EOF
+$CURRENT_USER ALL=(ALL) NOPASSWD: $TMUX_PATH ls, $TAIL_PATH -f /home/*/log/console/*, /home/*/* *
+EOF
+else
+    # Allow management of specific users only
+    IFS=',' read -ra ADDR <<< "$GAME_USERS"
+    SUDO_RULES=""
+    for i in "${ADDR[@]}"; do
+        USER_TRIM=$(echo "$i" | xargs)
+        SUDO_RULES="$SUDO_RULES
+$CURRENT_USER ALL=($USER_TRIM) NOPASSWD: $TMUX_PATH ls, $TAIL_PATH -f /home/$USER_TRIM/log/console/*, /home/$USER_TRIM/* *"
+    done
+    sudo bash -c "cat > $SUDOERS_FILE" <<EOF
+$SUDO_RULES
+EOF
+fi
+
+sudo chmod 440 "$SUDOERS_FILE"
+echo "Sudoers permissions configured at $SUDOERS_FILE"
+
 # 8. Auto-Registration
-if [ -n "$HUB_IP_FETCH" ]; then
-    echo "Attempting auto-registration with Hub..."
+if [ -n "$HUB_IP" ]; then
+    echo "Attempting auto-registration with Hub at $HUB_IP..."
     SPOKE_IP=$(hostname -I | awk '{print $1}')
     SPOKE_NAME=$(hostname)
     
     # Try to register
-    curl -X POST "http://$HUB_IP_FETCH:49950/spokes/register" \
+    curl -X POST "http://$HUB_IP:49950/spokes/register" \
          -H "Content-Type: application/json" \
          -d "{\"name\": \"$SPOKE_NAME\", \"ip\": \"$SPOKE_IP\", \"port\": $SPOKE_PORT, \"api_key\": \"$API_KEY\"}" || echo "Auto-registration failed. Please add manually."
 fi

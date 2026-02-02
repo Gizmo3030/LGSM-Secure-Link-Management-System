@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LGSM Secure-Link Hub</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs" defer></script>
     <style>
@@ -25,11 +26,11 @@
     <div x-show="!token" class="flex items-center justify-center pt-20">
         <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-96 border border-gray-700">
             <h2 class="text-2xl font-semibold mb-6 text-center">Login</h2>
-            <div class="space-y-4">
+            <form @submit.prevent="login()" class="space-y-4">
                 <input type="text" x-model="loginForm.username" placeholder="Username" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
                 <input type="password" x-model="loginForm.password" placeholder="Password" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
-                <button @click="login()" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded font-bold transition">Sign In</button>
-            </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded font-bold transition">Sign In</button>
+            </form>
             <p x-text="loginError" class="text-red-500 text-sm mt-4 text-center"></p>
         </div>
     </div>
@@ -44,10 +45,15 @@
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                     Easy Spoke Installation (Game VM)
                 </h2>
-                <p class="text-sm text-gray-300 mb-4">Run this to install at <code class="text-blue-200">/opt/lgsm-spoke</code>:</p>
-                <div class="relative bg-black rounded p-4 font-mono text-xs text-green-400 border border-gray-700">
-                    <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh</code>
-                    <button @click="copyText('installCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="text" x-model="installOpts.users" placeholder="Game Users (e.g. pzserver,rust)" class="bg-blue-900/40 border border-blue-500/30 rounded px-2 py-1 text-xs text-white outline-none focus:border-blue-400">
+                    </div>
+                    <p class="text-[10px] text-blue-300/70 italic leading-tight">Leave blank for 'auto' (detects any LGSM user in /home).</p>
+                    <div class="relative bg-black rounded p-3 font-mono text-[10px] text-green-400 border border-gray-700">
+                        <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh <span class="text-white" x-text="window.location.hostname"></span> <span class="text-white" x-text="installOpts.users"></span></code>
+                        <button @click="copyText('installCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
+                    </div>
                 </div>
             </div>
 
@@ -156,8 +162,18 @@
         <!-- Fleet Status Section -->
         <section>
             <h2 class="text-lg font-semibold mb-6 flex items-center">
-                <span class="w-3 h-3 bg-green-500 rounded-full mr-2"></span> Entire Fleet Management
+                <span :class="onlineSpokesCount() > 0 ? 'bg-green-500' : 'bg-red-500'" class="w-3 h-3 rounded-full mr-2"></span> 
+                Entire Fleet Management
+                <span class="ml-2 text-xs text-gray-500" x-text="'(' + onlineSpokesCount() + '/' + spokes.length + ' Online)'"></span>
             </h2>
+            
+            <template x-if="spokes.length === 0">
+                <div class="bg-gray-800 border border-dashed border-gray-700 rounded-lg p-10 text-center">
+                    <p class="text-gray-500 mb-4">No spokes connected yet.</p>
+                    <p class="text-xs text-gray-600">Use the "Easy Spoke Installation" command above on your game servers or add them manually.</p>
+                </div>
+            </template>
+
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <template x-for="spoke in spokes" :key="spoke.id">
                     <div class="bg-gray-800 border border-gray-700 rounded-lg p-5 hover:border-blue-500 transition shadow-lg">
@@ -165,6 +181,8 @@
                             <div>
                                 <h3 class="text-lg font-bold" x-text="spoke.name"></h3>
                                 <p class="text-xs text-gray-400" x-text="spoke.ip + ':' + spoke.port"></p>
+                                <p class="text-[9px] text-gray-500 mt-1" x-show="spoke.last_seen" x-text="'Last checked: ' + new Date(spoke.last_seen + 'Z').toLocaleString()"></p>
+                                <p class="text-[9px] text-red-500 mt-1" x-show="spoke.error" x-text="'Error: ' + spoke.error"></p>
                             </div>
                             <span :class="spoke.status === 'online' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'" 
                                   class="text-[10px] uppercase font-black px-2 py-1 rounded" 
@@ -172,14 +190,116 @@
                         </div>
                         
                         <div class="flex gap-2">
-                            <button @click="fetchStatus(spoke)" class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded">Refresh</button>
-                            <button class="bg-blue-600 hover:bg-blue-700 text-xs px-3 py-1 rounded">Control</button>
-                            <button x-show="isAdmin()" @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
+                            <button @click="fetchStatus(spoke)" 
+                                    :disabled="spoke.refreshing"
+                                    :class="spoke.refreshing ? 'opacity-50 cursor-not-allowed' : ''"
+                                    class="bg-gray-700 hover:bg-gray-600 text-xs px-3 py-1 rounded flex items-center gap-1">
+                                <svg x-show="spoke.refreshing" class="animate-spin h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span x-text="spoke.refreshing ? 'Refreshing...' : 'Refresh'"></span>
+                            </button>
+                            <button @click="spoke.showControl = !spoke.showControl; if(spoke.showControl) fetchTelemetry(spoke)" 
+                                    :class="spoke.showControl ? 'bg-blue-500' : 'bg-blue-600'"
+                                    class="hover:bg-blue-700 text-xs px-3 py-1 rounded transition">Control</button>
+                            <div class="flex gap-1" x-show="isAdmin()">
+                                <button @click="renameSpoke(spoke)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-3 py-1 rounded border border-gray-600">Rename</button>
+                                <button @click="deleteSpoke(spoke.id)" class="bg-red-900/50 hover:bg-red-700 text-red-300 text-xs px-3 py-1 rounded border border-red-500/30">Delete</button>
+                            </div>
+                        </div>
+
+                        <!-- Control Panel (Dynamic) -->
+                        <div x-show="spoke.showControl" x-transition class="mt-4 pt-4 border-t border-gray-700 space-y-4">
+                            <!-- Telemetry -->
+                            <div class="grid grid-cols-3 gap-2 text-center text-[10px]">
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">CPU</div>
+                                    <div class="text-blue-400 font-bold" x-text="(spoke.telemetry?.cpu_usage || 0) + '%'"></div>
+                                </div>
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">RAM</div>
+                                    <div class="text-green-400 font-bold" x-text="(spoke.telemetry?.ram_usage || 0) + '%'"></div>
+                                </div>
+                                <div class="bg-gray-900 p-2 rounded">
+                                    <div class="text-gray-500 uppercase">Disk</div>
+                                    <div class="text-yellow-400 font-bold" x-text="(spoke.telemetry?.disk_usage || 0) + '%'"></div>
+                                </div>
+                            </div>
+
+                        <!-- Sessions & Commands -->
+                        <div>
+                            <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">LGSM Game Instances</h4>
+                            <div class="space-y-2">
+                                <template x-if="!spoke.sessions || spoke.sessions.length === 0">
+                                    <p class="text-xs text-gray-600 italic">No LGSM scripts discovered on this host.</p>
+                                </template>
+                                <template x-for="session in spoke.sessions" :key="session.script + session.user">
+                                    <div class="bg-gray-900 p-2 rounded flex justify-between items-center border-l-2" 
+                                         :class="session.status === 'running' ? 'border-green-500' : 'border-gray-600'">
+                                        <div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-mono font-bold" :class="session.status === 'running' ? 'text-green-400' : 'text-gray-400'" x-text="session.script"></span>
+                                                <span :class="session.status === 'running' ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'" 
+                                                      class="text-[8px] uppercase px-1 rounded" x-text="session.status"></span>
+                                                <span x-show="session.is_zombie" class="bg-yellow-900/50 text-yellow-500 text-[7px] uppercase px-1 rounded" title="Tmux session exists but no script file found">Zombie</span>
+                                            </div>
+                                            <span class="text-[9px] text-gray-500 block" x-text="'user: ' + session.user"></span>
+                                        </div>
+                                        <div class="flex gap-1">
+                                            <button @click="fetchLogs(spoke, session.script, session.user)" class="bg-gray-700 hover:bg-gray-600 text-[9px] px-2 py-1 rounded">CONSOLE</button>
+                                            <button x-show="session.status !== 'running'" @click="runCommand(spoke, session.script, 'start', session.user)" class="bg-green-700 hover:bg-green-600 text-[9px] px-2 py-1 rounded">START</button>
+                                            <button x-show="session.status === 'running'" @click="runCommand(spoke, session.script, 'stop', session.user)" class="bg-red-700 hover:bg-red-600 text-[9px] px-2 py-1 rounded">STOP</button>
+                                            <button @click="runCommand(spoke, session.script, 'update', session.user)" class="bg-blue-700 hover:bg-blue-600 text-[9px] px-2 py-1 rounded">UPDATE</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                            <!-- Manual Script Trigger -->
+                            <div class="pt-2 border-t border-gray-700/50">
+                                <label class="block text-[10px] text-gray-500 mb-1 uppercase">Fallback / Manual Command</label>
+                                <p class="text-[8px] text-gray-500 mb-2 leading-tight">If a script isn't auto-discovered above, enter its filename here.</p>
+                                <div class="space-y-2">
+                                    <input type="text" x-model="spoke.manualScript" placeholder="script name (e.g. rustserver)" class="w-full bg-gray-900 text-xs border border-gray-700 rounded px-2 py-1 outline-none focus:border-blue-500">
+                                    <div class="grid grid-cols-3 gap-1">
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'start')" class="bg-green-600 hover:bg-green-700 text-[10px] px-2 py-1 rounded transition font-bold">START</button>
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'stop')" class="bg-red-600 hover:bg-red-700 text-[10px] px-2 py-1 rounded transition font-bold">STOP</button>
+                                        <button @click="runCommand(spoke, spoke.manualScript, 'update')" class="bg-blue-600 hover:bg-blue-700 text-[10px] px-2 py-1 rounded transition font-bold">UPDATE</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </template>
             </div>
         </section>
+
+        <!-- Logs Modal -->
+        <div x-show="showLogs" 
+             x-transition 
+             class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+             style="display: none;">
+            <div class="bg-gray-800 border border-gray-700 rounded-lg shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+                <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-lg">
+                    <h3 class="font-bold text-blue-400" x-text="logTitle"></h3>
+                    <div class="flex items-center gap-2">
+                        <button @click="fetchLogs({id: logSpokeId, name: logSpokeName}, logScript, logUser)" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition">Refresh</button>
+                        <button @click="showLogs = false" class="text-gray-400 hover:text-white">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 overflow-y-auto flex-1 bg-black font-mono text-xs text-green-400 selection:bg-green-900 selection:text-white">
+                    <pre class="whitespace-pre-wrap" x-text="logContent"></pre>
+                </div>
+                <div class="p-3 border-t border-gray-700 bg-gray-800 rounded-b-lg text-[10px] text-gray-500 flex justify-between">
+                    <span>Showing last 100 lines of console output.</span>
+                    <span x-show="logLoading" class="animate-pulse text-blue-400">Refreshing logs...</span>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -195,11 +315,20 @@
                 loginError: '',
                 spokes: [],
                 users: [],
-                newSpoke: { name: '', ip: '', port: 49950, api_key: '' },
+                spoke: { name: '', ip: '', port: 49950, api_key: '' },
                 newUser: { username: '', password: '', role: 'user' },
                 passChange: { new_password: '' },
+                installOpts: { user: '', dir: '' },
                 showSettings: false,
                 showProfile: false,
+                showLogs: false,
+                logContent: '',
+                logTitle: '',
+                logLoading: false,
+                logSpokeId: null,
+                logSpokeName: '',
+                logScript: '',
+                logUser: null,
                 settings: { discord_webhook: '' },
 
                 init() {
@@ -388,9 +517,23 @@
                         headers: { 'Authorization': 'Bearer ' + this.token }
                     });
                     if (res.ok) {
-                        this.spokes = await res.json();
+                        const data = await res.json();
+                        this.spokes = data.map(s => ({
+                            ...s,
+                            status: s.status || 'Checking...',
+                            last_seen: s.last_seen || null,
+                            refreshing: false,
+                            showControl: false,
+                            telemetry: null,
+                            sessions: [],
+                            manualScript: ''
+                        }));
                         this.spokes.forEach(s => this.fetchStatus(s));
                     }
+                },
+
+                onlineSpokesCount() {
+                    return this.spokes.filter(s => s.status === 'online').length;
                 },
 
                 async deleteSpoke(id) {
@@ -401,6 +544,23 @@
                     });
                     if (res.ok) {
                         this.loadSpokes();
+                    }
+                },
+
+                async renameSpoke(spoke) {
+                    const newName = prompt(`Enter new name for "${spoke.name}":`, spoke.name);
+                    if (!newName || newName === spoke.name) return;
+                    
+                    const res = await fetch(`/spokes/${spoke.id}/rename?name=${encodeURIComponent(newName)}`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    
+                    if (res.ok) {
+                        this.loadSpokes();
+                    } else {
+                        const data = await res.json();
+                        alert(data.detail || 'Failed to rename spoke');
                     }
                 },
 
@@ -444,14 +604,96 @@
                 },
 
                 async fetchStatus(spoke) {
-                    const res = await fetch(`/proxy/status/${spoke.id}`, {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
-                    const statusData = await res.json();
                     const index = this.spokes.findIndex(s => s.id === spoke.id);
                     if (index !== -1) {
-                        this.spokes[index].status = statusData.status;
+                        this.spokes[index].refreshing = true;
+                        this.spokes = [...this.spokes];
+                    }
+
+                    try {
+                        const res = await fetch(`/proxy/status/${spoke.id}`, {
+                            headers: { 'Authorization': 'Bearer ' + this.token }
+                        });
+                        const statusData = await res.json();
+                        if (index !== -1) {
+                            this.spokes[index].status = statusData.status;
+                            this.spokes[index].sessions = statusData.sessions || [];
+                            this.spokes[index].error = statusData.error || null;
+                            if (statusData.last_seen) this.spokes[index].last_seen = statusData.last_seen;
+                        }
+                    } catch (e) {
+                        if (index !== -1) {
+                            this.spokes[index].status = 'offline';
+                            this.spokes[index].error = 'Failed to connect to proxy';
+                        }
+                    } finally {
+                        if (index !== -1) {
+                            this.spokes[index].refreshing = false;
+                            this.spokes = [...this.spokes];
+                        }
+                    }
+                },
+
+                async fetchTelemetry(spoke) {
+                    const res = await fetch(`/proxy/telemetry/${spoke.id}`, {
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    const telemetryData = await res.json();
+                    const index = this.spokes.findIndex(s => s.id === spoke.id);
+                    if (index !== -1) {
+                        this.spokes[index].telemetry = telemetryData;
                         this.$nextTick(() => { this.spokes = [...this.spokes]; });
+                    }
+                },
+
+                async runCommand(spoke, script, action, user = null) {
+                    if (!script) return alert('Please enter a script name');
+                    let url = `/proxy/command/${spoke.id}/${script}/${action}`;
+                    if (user) url += `?user=${user}`;
+                    
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    });
+                    const result = await res.json();
+                    alert(result.message || result.error || 'Command triggered');
+                    setTimeout(() => this.fetchStatus(spoke), 2000);
+                },
+
+                async fetchLogs(spoke, script, user = null) {
+                    this.logTitle = `${script} Console Logs (${spoke.name})`;
+                    this.logContent = 'Loading logs...';
+                    this.showLogs = true;
+                    this.logLoading = true;
+                    
+                    // Store for refresh
+                    this.logSpokeId = spoke.id;
+                    this.logSpokeName = spoke.name;
+                    this.logScript = script;
+                    this.logUser = user;
+                    
+                    try {
+                        let url = `/proxy/logs/${spoke.id}/${script}?lines=100`;
+                        if (user) url += `&user=${user}`;
+                        
+                        const res = await fetch(url, {
+                            headers: { 'Authorization': 'Bearer ' + this.token }
+                        });
+                        const data = await res.json();
+                        
+                        if (res.ok) {
+                            if (data.error) {
+                                this.logContent = `Agent Error: ${data.error}`;
+                            } else {
+                                this.logContent = data.logs || 'Console log is empty.';
+                            }
+                        } else {
+                            this.logContent = `Fetch Error: ${data.detail || data.error || 'Failed to connect to agent'}`;
+                        }
+                    } catch (e) {
+                        this.logContent = `Fetch Error: ${e.message}`;
+                    } finally {
+                        this.logLoading = false;
                     }
                 }
             }
