@@ -5,13 +5,23 @@ import datetime
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import httpx
 import bcrypt
 import asyncio
 
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("hub")
+
 app = FastAPI(title="LGSM Hub Dashboard")
+
+# Enable proxy headers (crucial for external access via reverse proxies)
+app.add_middleware(ProxyHeadersMiddleware, trusted_proxies="*")
 
 # Security
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-hub-key")
@@ -100,6 +110,7 @@ def admin_required(user=Depends(get_current_user)):
 
 @app.post("/login")
 async def login(req: LoginRequest):
+    logger.info(f"Login attempt for user: {req.username}")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT password_hash, role FROM users WHERE username=?", (req.username,))

@@ -184,8 +184,13 @@
 
     <script>
         function hubApp() {
+            let initialToken = null;
+            try {
+                initialToken = localStorage.getItem('hub_token');
+            } catch (e) { console.warn('localStorage not available'); }
+
             return {
-                token: localStorage.getItem('hub_token'),
+                token: initialToken,
                 loginForm: { username: '', password: '' },
                 loginError: '',
                 spokes: [],
@@ -231,26 +236,44 @@
                 },
 
                 async login() {
+                    this.loginError = '';
                     try {
+                        console.log('Attempting login...');
                         const res = await fetch('/login', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.loginForm)
                         });
-                        const data = await res.json();
+                        
+                        let data;
+                        const contentType = res.headers.get("content-type");
+                        if (contentType && contentType.indexOf("application/json") !== -1) {
+                            data = await res.json();
+                        } else {
+                            const text = await res.text();
+                            console.error('Non-JSON response:', text);
+                            this.loginError = 'Server returned invalid response';
+                            return;
+                        }
+
                         if (res.ok) {
+                            console.log('Login successful');
                             this.token = data.access_token;
-                            localStorage.setItem('hub_token', this.token);
+                            try {
+                                localStorage.setItem('hub_token', this.token);
+                            } catch (e) { console.warn('localStorage not available'); }
                             this.loadSpokes();
                             if (this.isAdmin()) {
                                 this.loadSettings();
                                 this.loadUsers();
                             }
                         } else {
+                            console.warn('Login failed:', data);
                             this.loginError = data.detail || 'Login failed';
                         }
                     } catch (e) {
-                        this.loginError = 'Server error';
+                        console.error('Fetch error:', e);
+                        this.loginError = 'Connection error: ' + e.message;
                     }
                 },
 
@@ -258,7 +281,9 @@
                     this.token = null;
                     this.showSettings = false;
                     this.showProfile = false;
-                    localStorage.removeItem('hub_token');
+                    try {
+                        localStorage.removeItem('hub_token');
+                    } catch (e) { console.warn('localStorage not available'); }
                 },
 
                 async updatePassword() {
