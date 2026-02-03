@@ -21,7 +21,7 @@ logger = logging.getLogger("hub")
 app = FastAPI(title="LGSM Hub Dashboard")
 
 # Enable proxy headers (crucial for external access via reverse proxies)
-app.add_middleware(ProxyHeadersMiddleware, trusted_proxies="*")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Security
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-hub-key")
