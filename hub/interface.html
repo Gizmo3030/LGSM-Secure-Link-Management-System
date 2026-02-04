@@ -51,7 +51,7 @@
                     </div>
                     <p class="text-[10px] text-blue-300/70 italic leading-tight">Leave blank for 'auto' (detects any LGSM user in /home).</p>
                     <div class="relative bg-black rounded p-3 font-mono text-[10px] text-green-400 border border-gray-700">
-                        <code id="installCommand">wget -O setup.sh <span x-text="window.location.protocol + '//' + window.location.host"></span>/install/setup.sh && chmod +x setup.sh && ./setup.sh <span class="text-white" x-text="window.location.host"></span> <span class="text-white" x-text="installOpts.users"></span></code>
+                        <code id="installCommand">wget -O setup.sh <span x-text="window.location.origin"></span>/install/setup.sh && chmod +x setup.sh && ./setup.sh <span class="text-white" x-text="window.location.origin"></span> <span class="text-white" x-text="installOpts.users"></span></code>
                         <button @click="copyText('installCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
                     </div>
                 </div>
@@ -65,7 +65,7 @@
                 </h2>
                 <p class="text-sm text-gray-300 mb-4">Run this on the Game VM to completely remove the agent:</p>
                 <div class="relative bg-black rounded p-4 font-mono text-xs text-red-300 border border-gray-700/50">
-                    <code id="uninstallCommand">wget -O uninstall.sh <span x-text="window.location.protocol + '//' + window.location.host"></span>/install/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh</code>
+                    <code id="uninstallCommand">wget -O uninstall.sh <span x-text="window.location.origin"></span>/install/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh</code>
                     <button @click="copyText('uninstallCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
                 </div>
             </div>

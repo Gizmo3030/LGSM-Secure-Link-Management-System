@@ -21,22 +21,37 @@ HUB_ADDR=${1:-""}
 GAME_USERS=${2:-""}
 
 if [ -z "$HUB_ADDR" ]; then
-    read -p "Enter Hub Address (IP or FQDN) [e.g. hub.example.com]: " HUB_ADDR
+    read -p "Enter Hub Address (URL or FQDN) [e.g. http://hub.example.com]: " HUB_ADDR
 fi
 
-# Detect if port is provided in HUB_ADDR, otherwise default to 49950
-if [[ "$HUB_ADDR" == *":"* ]]; then
-    HUB_IP=$(echo $HUB_ADDR | cut -d':' -f1)
-    HUB_PORT=$(echo $HUB_ADDR | cut -d':' -f2)
+# Determine HUB_URL and HUB_IP
+if [[ "$HUB_ADDR" == http* ]]; then
+    # Full URL provided (e.g. from Hub UI)
+    HUB_URL="${HUB_ADDR%/}" # Remove trailing slash if any
+    HUB_IP=$(echo "$HUB_URL" | sed -e 's|^[^/]*//||' -e 's|[:/].*$||')
 else
-    HUB_IP=$HUB_ADDR
-    HUB_PORT=49950
+    # Legacy Host or Host:Port provided
+    if [[ "$HUB_ADDR" == *":"* ]]; then
+        HUB_IP=$(echo "$HUB_ADDR" | cut -d':' -f1)
+        HUB_PORT=$(echo "$HUB_ADDR" | cut -d':' -f2)
+    else
+        HUB_IP=$HUB_ADDR
+        # Default to 49950 if it's an IP, otherwise assume standard web port 80
+        if [[ $HUB_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            HUB_PORT=49950
+        else
+            HUB_PORT=80
+        fi
+    fi
+    
+    if [ "$HUB_PORT" == "443" ]; then
+        HUB_URL="https://$HUB_IP"
+    elif [ "$HUB_PORT" == "80" ]; then
+        HUB_URL="http://$HUB_IP"
+    else
+        HUB_URL="http://$HUB_IP:$HUB_PORT"
+    fi
 fi
-
-# Determine full URL for Hub
-HUB_URL="http://$HUB_IP:$HUB_PORT"
-if [ "$HUB_PORT" == "80" ]; then HUB_URL="http://$HUB_IP"; fi
-if [ "$HUB_PORT" == "443" ]; then HUB_URL="https://$HUB_IP"; fi
 
 if [ ! -f "main.py" ]; then
     if [ -n "$HUB_IP" ]; then
