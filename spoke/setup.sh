@@ -56,36 +56,37 @@ fi
 if [ ! -f "main.py" ]; then
     if [ -n "$HUB_IP" ]; then
         echo "Fetching agent core from Hub at $HUB_URL..."
-        wget -q -O main.py "$HUB_URL/install/main.py"
+        wget -q -O main.py "$HUB_URL/install/main.py" || { echo "Error: Failed to fetch main.py from $HUB_URL/install/main.py"; exit 1; }
     else
         echo "Warning: main.py is missing and no Hub address provided to fetch it."
     fi
 fi
 
-# ... lines omitted for readability, but I need to replace the whole block ...
-# Wait, I should probably just replace the parts that use 49950.
-
 # 2. Install Dependencies
-# ...
 echo "Installing system dependencies..."
-sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip tmux curl
+sudo apt-get update -qq
+sudo apt-get install -y python3-venv python3-pip tmux curl -qq
 
 # 3. Setup Python Virtual Environment
 echo "Setting up Python virtual environment..."
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn psutil httpx
+pip install -q fastapi uvicorn psutil httpx
 
 # 4. Port & User Selection
-read -p "Enter management port [default 49950]: " SPOKE_PORT
-SPOKE_PORT=${SPOKE_PORT:-49950}
+SPOKE_PORT=49950
+if [ -z "$1" ] && [ -t 0 ]; then
+    read -p "Enter management port [default 49950]: " INPUT_PORT
+    SPOKE_PORT=${INPUT_PORT:-49950}
+fi
 
 if [ -z "$GAME_USERS" ]; then
-    echo "--- Multi-User Configuration ---"
-    echo "You can specify a comma-separated list of users (e.g. pzserver,rustserver)"
-    echo "Or leave blank to auto-discover all users in /home."
-    read -p "Enter Game Users to monitor [default: auto]: " GAME_USERS
+    if [ -t 0 ]; then
+        echo "--- Multi-User Configuration ---"
+        echo "You can specify a comma-separated list of users (e.g. pzserver,rustserver)"
+        echo "Or leave blank to auto-discover all users in /home."
+        read -p "Enter Game Users to monitor [default: auto]: " GAME_USERS
+    fi
     GAME_USERS=${GAME_USERS:-"auto"}
 fi
 
@@ -93,19 +94,18 @@ fi
 if command -v ufw >/dev/null 2>&1; then
     if [ -n "$HUB_IP" ]; then
         echo "Allowing traffic from $HUB_IP on port $SPOKE_PORT using UFW..."
-        sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT"
+        sudo ufw allow from "$HUB_IP" to any port "$SPOKE_PORT" || true
     else
-        read -p "Enter Hub Public IP (to allow management traffic) [optional]: " ALT_HUB_IP
-        if [ -n "$ALT_HUB_IP" ]; then
-             sudo ufw allow from "$ALT_HUB_IP" to any port "$SPOKE_PORT"
-             HUB_IP=$ALT_HUB_IP
-        else
-            echo "Warning: No Hub IP provided. UFW rules not applied for source IP limiting."
+        if [ -t 0 ]; then
+            read -p "Enter Hub Public IP (to allow management traffic) [optional]: " ALT_HUB_IP
+            if [ -n "$ALT_HUB_IP" ]; then
+                sudo ufw allow from "$ALT_HUB_IP" to any port "$SPOKE_PORT"
+                HUB_IP=$ALT_HUB_IP
+            fi
         fi
     fi
 else
     echo "Notice: UFW not found. Skipping firewall configuration."
-    echo "Please ensure port $SPOKE_PORT is open on your network firewall."
 fi
 
 # 6. Generate API Key
