@@ -3,6 +3,7 @@ import subprocess
 import psutil
 import httpx
 import socket
+import re
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
@@ -17,6 +18,18 @@ HUB_URL = os.getenv("HUB_URL") # New env var
 PORT = int(os.getenv("PORT", 49950))
 # GAME_USERS can be a comma-separated list of usernames
 GAME_USERS = os.getenv("GAME_USERS", os.getenv("GAME_USER", "auto"))
+
+def validate_script_name(script: str) -> bool:
+    """
+    Validate script name using whitelist approach to prevent path traversal and command injection.
+    Only allows alphanumeric characters, hyphens, underscores, and dots.
+    """
+    if not script or len(script) > 255:
+        return False
+    # Whitelist: only allow alphanumeric, hyphens, underscores, and dots
+    # Must not start with a dot (hidden files)
+    pattern = r'^[a-zA-Z0-9][a-zA-Z0-9_\-\.]*$'
+    return bool(re.match(pattern, script))
 
 def get_target_users():
     """Returns a list of (username, home_dir) to monitor."""
@@ -222,6 +235,11 @@ async def get_telemetry(x_api_key: str = Header(...)):
 @app.post("/command/{script}/{action}")
 async def run_command(script: str, action: str, x_api_key: str = Header(...), user: Optional[str] = None):
     await verify_token(x_api_key)
+    
+    # Validate script name using whitelist approach
+    if not validate_script_name(script):
+        raise HTTPException(status_code=400, detail="Invalid script name")
+    
     allowed_actions = ["start", "stop", "restart", "update", "backup"]
     if action not in allowed_actions:
         raise HTTPException(status_code=400, detail="Invalid action")
@@ -262,6 +280,14 @@ async def run_command(script: str, action: str, x_api_key: str = Header(...), us
 @app.get("/logs/{script}")
 async def get_logs(script: str, x_api_key: str = Header(...), user: Optional[str] = None, lines: int = 100):
     await verify_token(x_api_key)
+    
+    # Validate script name using whitelist approach
+    if not validate_script_name(script):
+        raise HTTPException(status_code=400, detail="Invalid script name")
+    
+    # Validate lines parameter to prevent abuse
+    if lines < 1 or lines > 10000:
+        raise HTTPException(status_code=400, detail="Lines parameter must be between 1 and 10000")
     
     # Discovery user for logs
     target_user = user
@@ -347,6 +373,12 @@ async def stream_logs(websocket: WebSocket, script: str):
     await websocket.accept()
     process = None
     try:
+        # Validate script name using whitelist approach
+        if not validate_script_name(script):
+            await websocket.send_text("Invalid script name")
+            await websocket.close()
+            return
+        
         # Discovery user for logs
         target_user = None
         target_dir = None

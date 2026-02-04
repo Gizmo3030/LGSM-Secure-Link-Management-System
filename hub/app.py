@@ -24,7 +24,9 @@ app = FastAPI(title="LGSM Hub Dashboard")
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Security
-SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-hub-key")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set for security. Generate a secure random key with: python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 ALGORITHM = "HS256"
 
 # Database setup
@@ -58,6 +60,8 @@ def init_db():
         c.execute("ALTER TABLE spokes ADD COLUMN last_seen TEXT")
 
     # Create default user if not exists
+    # NOTE: Default password is "admin123" for initial setup only.
+    # Users MUST change this immediately after first login (documented in README)
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         hashed = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode()

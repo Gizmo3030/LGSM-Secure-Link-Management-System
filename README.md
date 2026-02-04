@@ -45,12 +45,18 @@ The system consists of two main components:
 ### 1. Hub Setup (Central Dashboard)
 
 1.  Navigate to the `hub` directory.
-2.  Run the system with Docker:
+2.  **IMPORTANT: Set a secure SECRET_KEY** before starting the hub:
+    ```bash
+    # Generate a secure random secret key
+    export SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+    # Or set it manually to a long random string
+    ```
+3.  Run the system with Docker:
     ```bash
     docker compose up -d
     ```
-3.  Access the dashboard at `http://YOUR_HUB_IP:49950`.
-4.  Default credentials: `admin` / `admin123` (Change these immediately in settings!).
+4.  Access the dashboard at `http://YOUR_HUB_IP:49950`.
+5.  **🔒 SECURITY: Login with default credentials (`admin` / `admin123`) and IMMEDIATELY change the password in Profile settings!**
 
 ### 2. Spoke Setup (Game Server VM)
 
@@ -66,6 +72,29 @@ The installer will:
 - Generate a unique API key.
 - Register itself with the Hub.
 - Setup a systemd service to start on boot.
+
+## 🔐 Security Best Practices
+
+**IMPORTANT: Please follow these security guidelines:**
+
+1. **Change Default Credentials**: The hub ships with default credentials (`admin`/`admin123`). Change the admin password immediately after first login via the Profile section.
+
+2. **Secure Your SECRET_KEY**: Never use the default SECRET_KEY in production. Generate a cryptographically secure random key:
+   ```bash
+   python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+   ```
+   Set this as an environment variable before starting the hub.
+
+3. **Protect API Keys**: Spoke API keys are auto-generated and stored in `/opt/lgsm-spoke/.env`. Protect these files with appropriate permissions (already set by installer).
+
+4. **Network Security**: 
+   - Run the hub behind a reverse proxy (nginx/Apache) with HTTPS/TLS
+   - Use firewall rules (UFW) to restrict access to spoke agents (automatically configured during setup)
+   - Consider VPN/private network for hub-spoke communication
+
+5. **Database Security**: The SQLite database (`hub.db`) contains hashed passwords and API keys. Ensure it has restricted file permissions and is not publicly accessible.
+
+6. **Regular Updates**: Keep your system packages, Python dependencies, and this application up to date.
 
 ## 🛡️ License
 

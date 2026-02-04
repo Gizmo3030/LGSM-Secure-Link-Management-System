@@ -8,6 +8,6 @@ services:
       - ./data:/app/data
       - ../spoke:/app/static/spoke
     environment:
-      - SECRET_KEY=lgsm-secure-key-123
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY environment variable is required}
       - DB_PATH=/app/data/hub.db
     restart: always
