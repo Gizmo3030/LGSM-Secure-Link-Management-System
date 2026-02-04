@@ -16,24 +16,42 @@ cd "$APP_DIR"
 
 # 1. Configuration & Fetching
 # Support for Command Line Arguments
-# Usage: ./setup.sh [HUB_IP] [GAME_USERS]
-HUB_IP=${1:-""}
+# Usage: ./setup.sh [HUB_ADDRESS] [GAME_USERS]
+HUB_ADDR=${1:-""}
 GAME_USERS=${2:-""}
 
-if [ -z "$HUB_IP" ]; then
-    read -p "Enter Hub IP Address [e.g. 192.168.1.100, optional]: " HUB_IP
+if [ -z "$HUB_ADDR" ]; then
+    read -p "Enter Hub Address (IP or FQDN) [e.g. hub.example.com]: " HUB_ADDR
 fi
+
+# Detect if port is provided in HUB_ADDR, otherwise default to 49950
+if [[ "$HUB_ADDR" == *":"* ]]; then
+    HUB_IP=$(echo $HUB_ADDR | cut -d':' -f1)
+    HUB_PORT=$(echo $HUB_ADDR | cut -d':' -f2)
+else
+    HUB_IP=$HUB_ADDR
+    HUB_PORT=49950
+fi
+
+# Determine full URL for Hub
+HUB_URL="http://$HUB_IP:$HUB_PORT"
+if [ "$HUB_PORT" == "80" ]; then HUB_URL="http://$HUB_IP"; fi
+if [ "$HUB_PORT" == "443" ]; then HUB_URL="https://$HUB_IP"; fi
 
 if [ ! -f "main.py" ]; then
     if [ -n "$HUB_IP" ]; then
-        echo "Fetching agent core from Hub..."
-        wget -q -O main.py "http://$HUB_IP:49950/install/main.py"
+        echo "Fetching agent core from Hub at $HUB_URL..."
+        wget -q -O main.py "$HUB_URL/install/main.py"
     else
-        echo "Warning: main.py is missing and no Hub IP provided to fetch it."
+        echo "Warning: main.py is missing and no Hub address provided to fetch it."
     fi
 fi
 
+# ... lines omitted for readability, but I need to replace the whole block ...
+# Wait, I should probably just replace the parts that use 49950.
+
 # 2. Install Dependencies
+# ...
 echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y python3-venv python3-pip tmux curl
@@ -81,6 +99,7 @@ echo "API_KEY=$API_KEY" > .env
 echo "PORT=$SPOKE_PORT" >> .env
 if [ -n "$HUB_IP" ]; then
     echo "HUB_IP=$HUB_IP" >> .env
+    echo "HUB_URL=$HUB_URL" >> .env
 fi
 if [ -n "$GAME_USERS" ]; then
     echo "GAME_USERS=$GAME_USERS" >> .env
@@ -143,12 +162,12 @@ echo "Sudoers permissions configured at $SUDOERS_FILE"
 
 # 8. Auto-Registration
 if [ -n "$HUB_IP" ]; then
-    echo "Attempting auto-registration with Hub at $HUB_IP..."
+    echo "Attempting auto-registration with Hub at $HUB_URL..."
     SPOKE_IP=$(hostname -I | awk '{print $1}')
     SPOKE_NAME=$(hostname)
     
     # Try to register
-    curl -X POST "http://$HUB_IP:49950/spokes/register" \
+    curl -X POST "$HUB_URL/spokes/register" \
          -H "Content-Type: application/json" \
          -d "{\"name\": \"$SPOKE_NAME\", \"ip\": \"$SPOKE_IP\", \"port\": $SPOKE_PORT, \"api_key\": \"$API_KEY\"}" || echo "Auto-registration failed. Please add manually."
 fi

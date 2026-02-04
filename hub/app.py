@@ -268,21 +268,33 @@ async def add_spoke(spoke: Spoke, user=Depends(admin_required)):
     return {"message": "Spoke added"}
 
 @app.post("/spokes/register")
-async def register_spoke(spoke: Spoke):
+async def register_spoke(spoke: Spoke, request: Request):
     # Public endpoint for auto-registration from setup.sh
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
+    # Use the requester's IP as a fallback or if the reported IP is local
+    client_ip = request.client.host
+    final_ip = spoke.ip
+    
+    # Simple check for private IP ranges or loopback
+    if spoke.ip.startswith(("127.", "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")):
+        # If the client is also on a private IP, they might be on the same network, so trust reported IP
+        # Otherwise, if the hub is public and the client is reporting a private IP, use the client's public IP
+        if not client_ip.startswith(("127.", "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")):
+            final_ip = client_ip
+    
     # Check if already exists by IP/Port
-    c.execute("SELECT id FROM spokes WHERE ip=? AND port=?", (spoke.ip, spoke.port))
+    c.execute("SELECT id FROM spokes WHERE ip=? AND port=?", (final_ip, spoke.port))
     if c.fetchone():
         conn.close()
         return {"message": "Spoke already registered"}
     
     c.execute("INSERT INTO spokes (name, ip, port, api_key) VALUES (?, ?, ?, ?)",
-              (spoke.name, spoke.ip, spoke.port, spoke.api_key))
+              (spoke.name, final_ip, spoke.port, spoke.api_key))
     conn.commit()
     conn.close()
-    return {"message": "Spoke auto-registered"}
+    return {"message": "Spoke auto-registered", "registered_ip": final_ip}
 
 @app.delete("/spokes/{spoke_id}")
 async def delete_spoke(spoke_id: int, user=Depends(admin_required)):

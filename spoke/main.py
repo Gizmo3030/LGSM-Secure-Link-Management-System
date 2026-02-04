@@ -13,6 +13,7 @@ app = FastAPI(title="LGSM Spoke Agent")
 # Environment variables loaded from .env via systemd
 API_KEY = os.getenv("API_KEY")
 HUB_IP = os.getenv("HUB_IP")
+HUB_URL = os.getenv("HUB_URL") # New env var
 PORT = int(os.getenv("PORT", 49950))
 # GAME_USERS can be a comma-separated list of usernames
 GAME_USERS = os.getenv("GAME_USERS", os.getenv("GAME_USER", "auto"))
@@ -47,19 +48,31 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def register_with_hub():
-    if HUB_IP:
+    if HUB_IP or HUB_URL:
         try:
-            # Get the primary IP address of the spoke
+            # Get the primary IP address of the spoke by connecting to the Hub's IP
+            # We use HUB_IP (the raw hostname/IP) for this socket trick
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect((HUB_IP, 49950))
-            spoke_ip = s.getsockname()[0]
-            s.close()
+            try:
+                # If HUB_IP is a hostname, this will resolve it
+                s.connect((HUB_IP, 49950))
+                spoke_ip = s.getsockname()[0]
+            except Exception:
+                # Fallback to general internet discovery if HUB_IP fails
+                s.connect(("8.8.8.8", 80))
+                spoke_ip = s.getsockname()[0]
+            finally:
+                s.close()
             
             spoke_name = socket.gethostname()
             
+            # Use HUB_URL if available, otherwise fallback to old hardcoded port
+            reg_url = HUB_URL if HUB_URL else f"http://{HUB_IP}:49950"
+            reg_url = reg_url.rstrip('/') + "/spokes/register"
+            
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"http://{HUB_IP}:49950/spokes/register",
+                    reg_url,
                     json={
                         "name": spoke_name,
                         "ip": spoke_ip,
@@ -69,7 +82,7 @@ async def register_with_hub():
                     timeout=5.0
                 )
                 if resp.status_code == 200:
-                    print(f"Successfully registered with hub at {HUB_IP}")
+                    print(f"Successfully registered with hub at {reg_url}")
                 else:
                     print(f"Hub registration returned status {resp.status_code}: {resp.text}")
         except Exception as e:

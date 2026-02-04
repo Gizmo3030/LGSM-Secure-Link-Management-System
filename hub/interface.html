@@ -51,7 +51,7 @@
                     </div>
                     <p class="text-[10px] text-blue-300/70 italic leading-tight">Leave blank for 'auto' (detects any LGSM user in /home).</p>
                     <div class="relative bg-black rounded p-3 font-mono text-[10px] text-green-400 border border-gray-700">
-                        <code id="installCommand">wget -O setup.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/setup.sh && chmod +x setup.sh && ./setup.sh <span class="text-white" x-text="window.location.hostname"></span> <span class="text-white" x-text="installOpts.users"></span></code>
+                        <code id="installCommand">wget -O setup.sh <span x-text="window.location.protocol + '//' + window.location.host"></span>/install/setup.sh && chmod +x setup.sh && ./setup.sh <span class="text-white" x-text="window.location.host"></span> <span class="text-white" x-text="installOpts.users"></span></code>
                         <button @click="copyText('installCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
                     </div>
                 </div>
@@ -65,7 +65,7 @@
                 </h2>
                 <p class="text-sm text-gray-300 mb-4">Run this on the Game VM to completely remove the agent:</p>
                 <div class="relative bg-black rounded p-4 font-mono text-xs text-red-300 border border-gray-700/50">
-                    <code id="uninstallCommand">wget -O uninstall.sh http://<span class="text-white" x-text="window.location.hostname"></span>:49950/install/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh</code>
+                    <code id="uninstallCommand">wget -O uninstall.sh <span x-text="window.location.protocol + '//' + window.location.host"></span>/install/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh</code>
                     <button @click="copyText('uninstallCommand')" class="absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-gray-400 transition border border-gray-600">Copy</button>
                 </div>
             </div>
@@ -364,6 +364,26 @@
                     }
                 },
 
+                async apiFetch(url, options = {}) {
+                    if (this.token) {
+                        options.headers = options.headers || {};
+                        options.headers['Authorization'] = 'Bearer ' + this.token;
+                    }
+                    
+                    try {
+                        const res = await fetch(url, options);
+                        if (res.status === 401) {
+                            console.warn('Session expired or invalid token');
+                            this.logout();
+                            return null;
+                        }
+                        return res;
+                    } catch (e) {
+                        console.error('API Fetch error:', e);
+                        throw e;
+                    }
+                },
+
                 async login() {
                     this.loginError = '';
                     try {
@@ -410,20 +430,19 @@
                     this.token = null;
                     this.showSettings = false;
                     this.showProfile = false;
+                    this.spokes = [];
                     try {
                         localStorage.removeItem('hub_token');
                     } catch (e) { console.warn('localStorage not available'); }
                 },
 
                 async updatePassword() {
-                    const res = await fetch('/change-password', {
+                    const res = await this.apiFetch('/change-password', {
                         method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + this.token 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(this.passChange)
                     });
+                    if (!res) return;
                     if (res.ok) {
                         alert('Password updated successfully');
                         this.passChange.new_password = '';
@@ -435,14 +454,12 @@
                 },
 
                 async createUser() {
-                    const res = await fetch('/users', {
+                    const res = await this.apiFetch('/users', {
                         method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + this.token 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(this.newUser)
                     });
+                    if (!res) return;
                     if (res.ok) {
                         alert('User account created');
                         this.newUser = { username: '', password: '', role: 'user' };
@@ -454,23 +471,20 @@
                 },
 
                 async loadUsers() {
-                    const res = await fetch('/users', {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
-                    if (res.ok) {
+                    const res = await this.apiFetch('/users');
+                    if (res && res.ok) {
                         this.users = await res.json();
                     }
                 },
 
                 async deleteUser(username) {
                     if (!confirm(`Are you sure you want to delete user "${username}"?`)) return;
-                    const res = await fetch(`/users/${username}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    const res = await this.apiFetch(`/users/${username}`, {
+                        method: 'DELETE'
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         this.loadUsers();
-                    } else {
+                    } else if (res) {
                         const data = await res.json();
                         alert(data.detail || 'Failed to delete user');
                     }
@@ -480,18 +494,15 @@
                     const newPass = prompt(`Enter new password for ${username}:`);
                     if (!newPass) return;
                     
-                    const res = await fetch(`/users/${username}/reset-password`, {
+                    const res = await this.apiFetch(`/users/${username}/reset-password`, {
                         method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + this.token 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ new_password: newPass })
                     });
                     
-                    if (res.ok) {
+                    if (res && res.ok) {
                         alert(`Password updated for ${username}`);
-                    } else {
+                    } else if (res) {
                         const data = await res.json();
                         alert(data.detail || 'Failed to reset password');
                     }
@@ -499,24 +510,21 @@
 
                 async toggleRole(user) {
                     const newRole = user.role === 'admin' ? 'user' : 'admin';
-                    const res = await fetch(`/users/${user.username}/role?role=${newRole}`, {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    const res = await this.apiFetch(`/users/${user.username}/role?role=${newRole}`, {
+                        method: 'POST'
                     });
                     
-                    if (res.ok) {
+                    if (res && res.ok) {
                         this.loadUsers();
-                    } else {
+                    } else if (res) {
                         const data = await res.json();
                         alert(data.detail || 'Failed to update role');
                     }
                 },
 
                 async loadSpokes() {
-                    const res = await fetch('/spokes', {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
-                    if (res.ok) {
+                    const res = await this.apiFetch('/spokes');
+                    if (res && res.ok) {
                         const data = await res.json();
                         this.spokes = data.map(s => ({
                             ...s,
@@ -538,11 +546,10 @@
 
                 async deleteSpoke(id) {
                     if (!confirm('Are you sure you want to delete this spoke configuration?')) return;
-                    const res = await fetch(`/spokes/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    const res = await this.apiFetch(`/spokes/${id}`, {
+                        method: 'DELETE'
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         this.loadSpokes();
                     }
                 },
@@ -551,53 +558,44 @@
                     const newName = prompt(`Enter new name for "${spoke.name}":`, spoke.name);
                     if (!newName || newName === spoke.name) return;
                     
-                    const res = await fetch(`/spokes/${spoke.id}/rename?name=${encodeURIComponent(newName)}`, {
-                        method: 'PATCH',
-                        headers: { 'Authorization': 'Bearer ' + this.token }
+                    const res = await this.apiFetch(`/spokes/${spoke.id}/rename?name=${encodeURIComponent(newName)}`, {
+                        method: 'PATCH'
                     });
                     
-                    if (res.ok) {
+                    if (res && res.ok) {
                         this.loadSpokes();
-                    } else {
+                    } else if (res) {
                         const data = await res.json();
                         alert(data.detail || 'Failed to rename spoke');
                     }
                 },
 
                 async loadSettings() {
-                    const res = await fetch('/settings', {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
-                    if (res.ok) {
+                    const res = await this.apiFetch('/settings');
+                    if (res && res.ok) {
                         this.settings = await res.json();
                     }
                 },
 
                 async saveSettings() {
-                    const res = await fetch('/settings', {
+                    const res = await this.apiFetch('/settings', {
                         method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + this.token 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(this.settings)
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         alert('Settings saved');
                         this.showSettings = false;
                     }
                 },
 
                 async addSpoke() {
-                    const res = await fetch('/spokes', {
+                    const res = await this.apiFetch('/spokes', {
                         method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + this.token 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(this.newSpoke)
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         this.loadSpokes();
                         this.newSpoke = { name: '', ip: '', port: 49950, api_key: '' };
                     }
@@ -611,9 +609,8 @@
                     }
 
                     try {
-                        const res = await fetch(`/proxy/status/${spoke.id}`, {
-                            headers: { 'Authorization': 'Bearer ' + this.token }
-                        });
+                        const res = await this.apiFetch(`/proxy/status/${spoke.id}`);
+                        if (!res) return;
                         const statusData = await res.json();
                         if (index !== -1) {
                             this.spokes[index].status = statusData.status;
@@ -635,9 +632,8 @@
                 },
 
                 async fetchTelemetry(spoke) {
-                    const res = await fetch(`/proxy/telemetry/${spoke.id}`, {
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
+                    const res = await this.apiFetch(`/proxy/telemetry/${spoke.id}`);
+                    if (!res) return;
                     const telemetryData = await res.json();
                     const index = this.spokes.findIndex(s => s.id === spoke.id);
                     if (index !== -1) {
@@ -651,10 +647,8 @@
                     let url = `/proxy/command/${spoke.id}/${script}/${action}`;
                     if (user) url += `?user=${user}`;
                     
-                    const res = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + this.token }
-                    });
+                    const res = await this.apiFetch(url, { method: 'POST' });
+                    if (!res) return;
                     const result = await res.json();
                     alert(result.message || result.error || 'Command triggered');
                     setTimeout(() => this.fetchStatus(spoke), 2000);
@@ -676,9 +670,8 @@
                         let url = `/proxy/logs/${spoke.id}/${script}?lines=100`;
                         if (user) url += `&user=${user}`;
                         
-                        const res = await fetch(url, {
-                            headers: { 'Authorization': 'Bearer ' + this.token }
-                        });
+                        const res = await this.apiFetch(url);
+                        if (!res) return;
                         const data = await res.json();
                         
                         if (res.ok) {
